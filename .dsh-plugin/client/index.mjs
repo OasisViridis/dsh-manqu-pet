@@ -13,6 +13,7 @@
 
 import { CELL_WIDTH, CELL_HEIGHT, COLUMNS, stateById, frameIndexesFor, durationFor, directionFor, detectPopulatedFrames } from './atlas.mjs'
 import { pickBaseState } from '../src/state.mjs'
+import { shellEnvFrom, shellInsets, clampPetX, clampPetPosition } from '../src/shell.mjs'
 import { STATE_PATH, ASSETS_PATH, EVENTS_PATH } from '../src/routes.mjs'
 
 const ASSETS_URL = ASSETS_PATH
@@ -29,10 +30,12 @@ const DRAG_FRAME_MS = 90 // 拖拽蠕动帧间隔
 const TRANSIENT_HOLD_MS = 500 // once 播完保持末帧再回基础态
 
 const CSS = `
-[data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none; font-family: system-ui, sans-serif; }
+[data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none;
+  font-family: system-ui, sans-serif; -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] canvas.pet-canvas { display: block; width: 100%; height: 100%; pointer-events: none;
   image-rendering: auto; filter: drop-shadow(0 6px 10px rgba(0,0,0,.28)); }
-[data-dsh-manqu-pet] .pet-hitarea { position: absolute; inset: 0; cursor: grab; z-index: 2; }
+[data-dsh-manqu-pet] .pet-hitarea { position: absolute; inset: 0; cursor: grab; z-index: 2;
+  -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] .pet-hitarea.dragging { cursor: grabbing; }
 [data-dsh-manqu-pet] .pet-status { position: absolute; left: 50%; top: calc(100% + 10px); transform: translateX(-50%);
   width: max-content; max-width: 240px; padding: 5px 9px; border-radius: 10px; z-index: 3;
@@ -62,9 +65,14 @@ const CSS = `
 [data-dsh-manqu-pet] .pet-bubble { position: absolute; left: 50%; top: -12px; transform: translate(-50%, -100%);
   background: rgba(24,28,38,.94); color: #E8EBF2; font-size: 11px; padding: 4px 9px; border-radius: 10px;
   white-space: nowrap; pointer-events: none; z-index: 5; }
+/* 贴底（桌面端窗口较矮 / 拖到下方）→ 状态条与右键菜单改开在宠物上方；
+   贴顶（被标题栏安全区推到顶部附近）→ 气泡改放到下方，避免溢出窗口被裁掉。 */
+[data-dsh-manqu-pet][data-pop-above] .pet-status,
+[data-dsh-manqu-pet][data-pop-above] .pet-menu { top: auto; bottom: calc(100% + 10px); }
+[data-dsh-manqu-pet][data-bubble-below] .pet-bubble { top: calc(100% + 12px); transform: translate(-50%, 0); }
 [data-dsh-manqu-pet][data-hidden] { display: none; }
 [data-dsh-manqu-pet] .pet-restore { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
-  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer; -webkit-app-region: no-drag;
   background: rgba(24,28,38,.9); border: 1px solid rgba(255,255,255,.14); color: #E8EBF2; font-size: 12px;
   font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 @media (prefers-reduced-motion: reduce) { [data-dsh-manqu-pet] .pet-bubble { animation: none; } }
@@ -131,16 +139,52 @@ export function apply(ctx = {}) {
   restore.style.display = 'none'
   document.body.appendChild(restore)
 
-  // ---- 位置 ----
+  // ---- 位置（宿主窗口壳层感知）----
+  // DSH 桌面端（Electron 外壳）与浏览器共用同一 Web GUI，差异只在外层窗口壳：桌面端把
+  // data-windows-titlebar / data-platform / data-fullscreen 与 --dsh-windows-titlebar-height
+  // 写在 <html> 上（Windows 顶部 40px 是原生最小化/最大化/关闭按钮，macOS 是红绿灯）。
+  // 安全区换算与坐标钳制是纯函数，见 src/shell.mjs；这里只负责读写 DOM。
   const vw = () => window.innerWidth
-  const clampX = (x) => Math.max(8, Math.min(vw() - host.offsetWidth - 8, x))
+  const vh = () => window.innerHeight
+  const shellInsetsNow = () => {
+    const root = document.documentElement
+    const cssHeight = Number.parseFloat(getComputedStyle(root).getPropertyValue('--dsh-windows-titlebar-height'))
+    return shellInsets(shellEnvFrom(root, { titlebarHeight: Number.isFinite(cssHeight) ? cssHeight : undefined }))
+  }
+  const clampX = (value) => clampPetX(value, host.offsetWidth, vw())
   let x = STORE.get('dsh-manqu-pet:x', 24)
   let y = STORE.get('dsh-manqu-pet:y', null) // null = 贴底
+  const POPOVER_SPACE = 190 // 下方预留空间不足时，状态条/菜单改开在宠物上方
+  const BUBBLE_SPACE = 96 // 上方空间不足时，气泡改放到宠物下方
+  const updatePlacement = () => {
+    const height = host.offsetHeight
+    const top = y === null ? vh() - 16 - height : y
+    const spaceBelow = vh() - (top + height)
+    const spaceAbove = top
+    host.toggleAttribute('data-pop-above', spaceBelow < POPOVER_SPACE && spaceAbove > spaceBelow)
+    host.toggleAttribute('data-bubble-below', spaceAbove < BUBBLE_SPACE)
+  }
   const applyPos = () => {
-    x = clampX(x)
-    host.style.left = `${x}px`
-    host.style.bottom = y === null ? '16px' : 'auto'
-    host.style.top = y === null ? 'auto' : `${y}px`
+    if (y === null) {
+      // 贴底锚定：bottom:16px 与顶部壳层无关，只需钳制左右
+      x = clampX(x)
+      host.style.left = `${x}px`
+      host.style.bottom = '16px'
+      host.style.top = 'auto'
+    } else {
+      // 绝对定位：既要在窗口内，也要避开桌面端标题栏安全区（旧坐标可能来自更大的窗口）
+      const next = clampPetPosition(
+        { x, y, width: host.offsetWidth, height: host.offsetHeight },
+        { viewportWidth: vw(), viewportHeight: vh() },
+        shellInsetsNow(),
+      )
+      x = next.x
+      y = next.y
+      host.style.left = `${x}px`
+      host.style.top = `${y}px`
+      host.style.bottom = 'auto'
+    }
+    updatePlacement()
   }
   applyPos()
 
@@ -187,7 +231,7 @@ export function apply(ctx = {}) {
   let seenReadyUntil = 0 // 已读水位：见过的最大 readyUntil（新完成事件会推高它）
   let readyUnread = false // Ready 未读标记；单击宠物即视为已读
   let shownBubbleKey = '' // 已展示过的气泡载荷键（避免轮询重复弹）
-  let refreshTimer = null
+  let pollTimer = null // 轮询定时器；窗口隐藏（桌面端最小化）时停掉，恢复时重建
   let refreshBusy = false
   let eventSource = null
   let welcomed = false
@@ -243,6 +287,17 @@ export function apply(ctx = {}) {
       }
     } catch { /* 瞬态错误：下轮重试 */ } finally {
       refreshBusy = false
+    }
+  }
+  // 桌面端最小化/隐藏时停掉轮询（Electron 已自动暂停 rAF，轮询是唯一持续负载）；
+  // 恢复可见时重建并立刻补一次，状态不会落后。
+  const startPolling = () => {
+    if (pollTimer === null) pollTimer = setInterval(refresh, POLL_MS)
+  }
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer)
+      pollTimer = null
     }
   }
 
@@ -398,7 +453,12 @@ export function apply(ctx = {}) {
         }
         x = clampX(e.clientX - host.offsetWidth / 2)
         const ny = e.clientY - host.offsetHeight / 2
-        y = Math.max(4, Math.min(window.innerHeight - host.offsetHeight - 4, ny))
+        // 拖拽同样避开桌面端标题栏安全区：拖到窗口顶部也不会钻进原生按钮底下
+        y = clampPetPosition(
+          { x, y: ny, width: host.offsetWidth, height: host.offsetHeight },
+          { viewportWidth: vw(), viewportHeight: vh() },
+          shellInsetsNow(),
+        ).y
         applyPos()
       }
       press.px = e.clientX
@@ -539,16 +599,37 @@ export function apply(ctx = {}) {
     host.setAttribute('data-hidden', '')
     restore.style.display = ''
   }
-  const onResize = () => {
-    x = clampX(x)
-    if (y !== null) y = Math.max(4, Math.min(window.innerHeight - host.offsetHeight - 4, y))
-    applyPos()
-  }
+  // 窗口尺寸变化（桌面端可自由缩放/最大化）：重钳 x 与 y，并避开壳层安全区。
+  const onResize = () => { applyPos() }
   window.addEventListener('resize', onResize)
-  refreshTimer = setInterval(refresh, POLL_MS)
+  // 桌面端壳层状态变化（进出全屏、标题栏标记写入）不触发 resize，需要单独监听；
+  // 全屏会把 Windows/macOS 的原生控件收起，安全区随之从 40/48 降到 20。
+  const shellObserver = typeof MutationObserver === 'function'
+    ? new MutationObserver(() => { applyPos() })
+    : null
+  shellObserver?.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-fullscreen', 'data-windows-titlebar', 'data-platform'],
+  })
+  window.addEventListener('fullscreenchange', onResize)
+  // 桌面端窗口从最小化/后台恢复：重建轮询、补一次位置钳制与状态刷新。
+  const onVisibilityChange = () => {
+    if (document.visibilityState !== 'visible') {
+      stopPolling()
+      clearLook()
+      return
+    }
+    startPolling()
+    applyPos()
+    refresh()
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
+  startPolling()
   try {
     eventSource = new EventSource(EVENTS_PATH)
-    eventSource.onmessage = () => refresh()
+    eventSource.onmessage = () => {
+      if (document.visibilityState !== 'hidden') refresh()
+    }
   } catch { /* SSE 不可用 → 纯轮询兜底 */ }
   loadAssets()
   refresh()
@@ -556,7 +637,7 @@ export function apply(ctx = {}) {
   scheduleWander()
 
   return () => {
-    clearInterval(refreshTimer)
+    stopPolling()
     clearTimeout(wanderTimer)
     clearTimeout(wanderStepTimer)
     eventSource?.close()
@@ -569,6 +650,9 @@ export function apply(ctx = {}) {
     document.documentElement.removeEventListener('mouseleave', clearLook)
     window.removeEventListener('blur', clearLook)
     window.removeEventListener('resize', onResize)
+    window.removeEventListener('fullscreenchange', onResize)
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+    shellObserver?.disconnect()
   }
 }
 

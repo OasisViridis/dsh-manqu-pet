@@ -142,6 +142,60 @@ function pickBaseState(mood, now = Date.now()) {
   return "idle";
 }
 
+// .dsh-plugin/src/shell.mjs
+var PET_GAP = 4;
+var WINDOWS_TITLEBAR_HEIGHT = 40;
+var MACOS_TOP_CLEARANCE = 48;
+var FULLSCREEN_TOP_CLEARANCE = 20;
+var NO_INSETS = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+var finiteOr = (value, fallback) => Number.isFinite(value) ? value : fallback;
+function shellEnvFrom(root, hint = {}) {
+  if (root === null || typeof root !== "object") {
+    return { platform: "", windowsTitlebar: false, fullscreen: false, titlebarHeight: void 0 };
+  }
+  const dataset = root.dataset ?? {};
+  const hasAttribute = typeof root.hasAttribute === "function" ? (name2) => root.hasAttribute(name2) === true : () => false;
+  const height = Number.isFinite(hint.titlebarHeight) ? hint.titlebarHeight : void 0;
+  return {
+    platform: typeof dataset.platform === "string" ? dataset.platform : "",
+    windowsTitlebar: hasAttribute("data-windows-titlebar"),
+    fullscreen: hasAttribute("data-fullscreen"),
+    titlebarHeight: height
+  };
+}
+function shellInsets(env = {}) {
+  const platform = typeof env.platform === "string" ? env.platform : "";
+  const windowsTitlebar = env.windowsTitlebar === true;
+  if (platform !== "darwin" && !windowsTitlebar) return NO_INSETS;
+  if (env.fullscreen === true) return { ...NO_INSETS, top: FULLSCREEN_TOP_CLEARANCE };
+  if (windowsTitlebar) {
+    const height = finiteOr(env.titlebarHeight, WINDOWS_TITLEBAR_HEIGHT);
+    return { ...NO_INSETS, top: height > 0 ? height : WINDOWS_TITLEBAR_HEIGHT };
+  }
+  return { ...NO_INSETS, top: MACOS_TOP_CLEARANCE };
+}
+var clampAxis = (value, min, max) => Math.min(max, Math.max(min, value));
+function clampPetX(x, width, viewportWidth, gap = PET_GAP) {
+  const safeGap = Math.max(0, finiteOr(gap, PET_GAP));
+  const petWidth = Math.max(0, finiteOr(width, 0));
+  const vw = Math.max(0, finiteOr(viewportWidth, 0));
+  const maxX = Math.max(safeGap, vw - petWidth - safeGap);
+  return clampAxis(finiteOr(x, safeGap), safeGap, maxX);
+}
+function clampPetPosition(rect = {}, viewport = {}, insets = NO_INSETS, gap = PET_GAP) {
+  const safeGap = Math.max(0, finiteOr(gap, PET_GAP));
+  const width = Math.max(0, finiteOr(rect.width, 0));
+  const height = Math.max(0, finiteOr(rect.height, 0));
+  const vw = Math.max(0, finiteOr(viewport.viewportWidth, 0));
+  const vh = Math.max(0, finiteOr(viewport.viewportHeight, 0));
+  const minY = Math.max(0, finiteOr(insets?.top, 0) + safeGap);
+  const maxY = Math.max(minY, vh - height - safeGap);
+  return {
+    x: clampPetX(rect.x, width, vw, safeGap),
+    y: clampAxis(finiteOr(rect.y, minY), minY, maxY)
+  };
+}
+
 // .dsh-plugin/src/routes.mjs
 var ROUTE_PREFIX = "/manqu";
 var STATE_PATH = `${ROUTE_PREFIX}/state`;
@@ -161,10 +215,12 @@ var WANDER_MAX_WAIT = 42e3;
 var WANDER_SPEED = 46;
 var TRANSIENT_HOLD_MS = 500;
 var CSS = `
-[data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none; font-family: system-ui, sans-serif; }
+[data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none;
+  font-family: system-ui, sans-serif; -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] canvas.pet-canvas { display: block; width: 100%; height: 100%; pointer-events: none;
   image-rendering: auto; filter: drop-shadow(0 6px 10px rgba(0,0,0,.28)); }
-[data-dsh-manqu-pet] .pet-hitarea { position: absolute; inset: 0; cursor: grab; z-index: 2; }
+[data-dsh-manqu-pet] .pet-hitarea { position: absolute; inset: 0; cursor: grab; z-index: 2;
+  -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] .pet-hitarea.dragging { cursor: grabbing; }
 [data-dsh-manqu-pet] .pet-status { position: absolute; left: 50%; top: calc(100% + 10px); transform: translateX(-50%);
   width: max-content; max-width: 240px; padding: 5px 9px; border-radius: 10px; z-index: 3;
@@ -194,9 +250,14 @@ var CSS = `
 [data-dsh-manqu-pet] .pet-bubble { position: absolute; left: 50%; top: -12px; transform: translate(-50%, -100%);
   background: rgba(24,28,38,.94); color: #E8EBF2; font-size: 11px; padding: 4px 9px; border-radius: 10px;
   white-space: nowrap; pointer-events: none; z-index: 5; }
+/* \u8D34\u5E95\uFF08\u684C\u9762\u7AEF\u7A97\u53E3\u8F83\u77EE / \u62D6\u5230\u4E0B\u65B9\uFF09\u2192 \u72B6\u6001\u6761\u4E0E\u53F3\u952E\u83DC\u5355\u6539\u5F00\u5728\u5BA0\u7269\u4E0A\u65B9\uFF1B
+   \u8D34\u9876\uFF08\u88AB\u6807\u9898\u680F\u5B89\u5168\u533A\u63A8\u5230\u9876\u90E8\u9644\u8FD1\uFF09\u2192 \u6C14\u6CE1\u6539\u653E\u5230\u4E0B\u65B9\uFF0C\u907F\u514D\u6EA2\u51FA\u7A97\u53E3\u88AB\u88C1\u6389\u3002 */
+[data-dsh-manqu-pet][data-pop-above] .pet-status,
+[data-dsh-manqu-pet][data-pop-above] .pet-menu { top: auto; bottom: calc(100% + 10px); }
+[data-dsh-manqu-pet][data-bubble-below] .pet-bubble { top: calc(100% + 12px); transform: translate(-50%, 0); }
 [data-dsh-manqu-pet][data-hidden] { display: none; }
 [data-dsh-manqu-pet] .pet-restore { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
-  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer; -webkit-app-region: no-drag;
   background: rgba(24,28,38,.9); border: 1px solid rgba(255,255,255,.14); color: #E8EBF2; font-size: 12px;
   font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 @media (prefers-reduced-motion: reduce) { [data-dsh-manqu-pet] .pet-bubble { animation: none; } }
@@ -267,14 +328,44 @@ function apply(ctx = {}) {
   restore.style.display = "none";
   document.body.appendChild(restore);
   const vw = () => window.innerWidth;
-  const clampX = (x2) => Math.max(8, Math.min(vw() - host.offsetWidth - 8, x2));
+  const vh = () => window.innerHeight;
+  const shellInsetsNow = () => {
+    const root = document.documentElement;
+    const cssHeight = Number.parseFloat(getComputedStyle(root).getPropertyValue("--dsh-windows-titlebar-height"));
+    return shellInsets(shellEnvFrom(root, { titlebarHeight: Number.isFinite(cssHeight) ? cssHeight : void 0 }));
+  };
+  const clampX = (value) => clampPetX(value, host.offsetWidth, vw());
   let x = STORE.get("dsh-manqu-pet:x", 24);
   let y = STORE.get("dsh-manqu-pet:y", null);
+  const POPOVER_SPACE = 190;
+  const BUBBLE_SPACE = 96;
+  const updatePlacement = () => {
+    const height = host.offsetHeight;
+    const top = y === null ? vh() - 16 - height : y;
+    const spaceBelow = vh() - (top + height);
+    const spaceAbove = top;
+    host.toggleAttribute("data-pop-above", spaceBelow < POPOVER_SPACE && spaceAbove > spaceBelow);
+    host.toggleAttribute("data-bubble-below", spaceAbove < BUBBLE_SPACE);
+  };
   const applyPos = () => {
-    x = clampX(x);
-    host.style.left = `${x}px`;
-    host.style.bottom = y === null ? "16px" : "auto";
-    host.style.top = y === null ? "auto" : `${y}px`;
+    if (y === null) {
+      x = clampX(x);
+      host.style.left = `${x}px`;
+      host.style.bottom = "16px";
+      host.style.top = "auto";
+    } else {
+      const next = clampPetPosition(
+        { x, y, width: host.offsetWidth, height: host.offsetHeight },
+        { viewportWidth: vw(), viewportHeight: vh() },
+        shellInsetsNow()
+      );
+      x = next.x;
+      y = next.y;
+      host.style.left = `${x}px`;
+      host.style.top = `${y}px`;
+      host.style.bottom = "auto";
+    }
+    updatePlacement();
   };
   applyPos();
   let pet = null;
@@ -317,7 +408,7 @@ function apply(ctx = {}) {
   let seenReadyUntil = 0;
   let readyUnread = false;
   let shownBubbleKey = "";
-  let refreshTimer = null;
+  let pollTimer = null;
   let refreshBusy = false;
   let eventSource = null;
   let welcomed = false;
@@ -373,6 +464,15 @@ function apply(ctx = {}) {
     } catch {
     } finally {
       refreshBusy = false;
+    }
+  };
+  const startPolling = () => {
+    if (pollTimer === null) pollTimer = setInterval(refresh, POLL_MS);
+  };
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
   };
   let dragging = false;
@@ -520,7 +620,11 @@ function apply(ctx = {}) {
         }
         x = clampX(e.clientX - host.offsetWidth / 2);
         const ny = e.clientY - host.offsetHeight / 2;
-        y = Math.max(4, Math.min(window.innerHeight - host.offsetHeight - 4, ny));
+        y = clampPetPosition(
+          { x, y: ny, width: host.offsetWidth, height: host.offsetHeight },
+          { viewportWidth: vw(), viewportHeight: vh() },
+          shellInsetsNow()
+        ).y;
         applyPos();
       }
       press.px = e.clientX;
@@ -673,15 +777,34 @@ function apply(ctx = {}) {
     restore.style.display = "";
   }
   const onResize = () => {
-    x = clampX(x);
-    if (y !== null) y = Math.max(4, Math.min(window.innerHeight - host.offsetHeight - 4, y));
     applyPos();
   };
   window.addEventListener("resize", onResize);
-  refreshTimer = setInterval(refresh, POLL_MS);
+  const shellObserver = typeof MutationObserver === "function" ? new MutationObserver(() => {
+    applyPos();
+  }) : null;
+  shellObserver?.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-fullscreen", "data-windows-titlebar", "data-platform"]
+  });
+  window.addEventListener("fullscreenchange", onResize);
+  const onVisibilityChange = () => {
+    if (document.visibilityState !== "visible") {
+      stopPolling();
+      clearLook();
+      return;
+    }
+    startPolling();
+    applyPos();
+    refresh();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  startPolling();
   try {
     eventSource = new EventSource(EVENTS_PATH);
-    eventSource.onmessage = () => refresh();
+    eventSource.onmessage = () => {
+      if (document.visibilityState !== "hidden") refresh();
+    };
   } catch {
   }
   loadAssets();
@@ -689,7 +812,7 @@ function apply(ctx = {}) {
   requestAnimationFrame(tick);
   scheduleWander();
   return () => {
-    clearInterval(refreshTimer);
+    stopPolling();
     clearTimeout(wanderTimer);
     clearTimeout(wanderStepTimer);
     eventSource?.close();
@@ -702,6 +825,9 @@ function apply(ctx = {}) {
     document.documentElement.removeEventListener("mouseleave", clearLook);
     window.removeEventListener("blur", clearLook);
     window.removeEventListener("resize", onResize);
+    window.removeEventListener("fullscreenchange", onResize);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    shellObserver?.disconnect();
   };
 }
 var name = "dsh-manqu-pet";
