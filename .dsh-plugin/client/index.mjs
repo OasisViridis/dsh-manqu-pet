@@ -13,7 +13,7 @@
 
 import { CELL_WIDTH, CELL_HEIGHT, COLUMNS, stateById, frameIndexesFor, durationFor, directionFor, detectPopulatedFrames } from './atlas.mjs'
 import { pickBaseState } from '../src/state.mjs'
-import { shellEnvFrom, shellInsets, clampPetX, clampPetPosition } from '../src/shell.mjs'
+import { shellEnvFrom, shellInsets, clampPetX, clampPetPosition, PET_BOTTOM_GAP, overlayPlacement } from '../src/shell.mjs'
 import { STATE_PATH, ASSETS_PATH, EVENTS_PATH } from '../src/routes.mjs'
 
 const ASSETS_URL = ASSETS_PATH
@@ -141,35 +141,48 @@ export function apply(ctx = {}) {
 
   // ---- 位置（宿主窗口壳层感知）----
   // DSH 桌面端（Electron 外壳）与浏览器共用同一 Web GUI，差异只在外层窗口壳：桌面端把
-  // data-windows-titlebar / data-platform / data-fullscreen 与 --dsh-windows-titlebar-height
-  // 写在 <html> 上（Windows 顶部 40px 是原生最小化/最大化/关闭按钮，macOS 是红绿灯）。
-  // 安全区换算与坐标钳制是纯函数，见 src/shell.mjs；这里只负责读写 DOM。
+  // data-windows-titlebar / data-platform / data-fullscreen 写在 <html> 上，并发布
+  // --dsh-windows-titlebar-height（Windows 顶部 40px 原生按钮）与 --dsh-frame-top-clearance
+  // （macOS 红绿灯 48px）；两者都由 ui-layout 提供，插件只读不猜。
+  // 安全区换算、坐标钳制与覆盖层方向是纯函数，见 src/shell.mjs；这里只负责读写 DOM。
   const vw = () => window.innerWidth
   const vh = () => window.innerHeight
-  const shellInsetsNow = () => {
-    const root = document.documentElement
-    const cssHeight = Number.parseFloat(getComputedStyle(root).getPropertyValue('--dsh-windows-titlebar-height'))
-    return shellInsets(shellEnvFrom(root, { titlebarHeight: Number.isFinite(cssHeight) ? cssHeight : undefined }))
+  // 壳层尺寸只随窗口壳变化：缓存到 resize / 全屏 / 标记变化为止。
+  // 拖拽时每帧读 getComputedStyle 会强制重排，所以这里自己管失效。
+  const readPx = (style, name) => {
+    const value = Number.parseFloat(style.getPropertyValue(name))
+    return Number.isFinite(value) ? value : undefined
   }
-  const clampX = (value) => clampPetX(value, host.offsetWidth, vw())
+  let cachedInsets = null
+  const invalidateInsets = () => { cachedInsets = null }
+  const shellInsetsNow = () => {
+    if (cachedInsets === null) {
+      const root = document.documentElement
+      const style = getComputedStyle(root)
+      cachedInsets = shellInsets(shellEnvFrom(root, {
+        titlebarHeight: readPx(style, '--dsh-windows-titlebar-height'),
+        frameTopClearance: readPx(style, '--dsh-frame-top-clearance'),
+      }))
+    }
+    return cachedInsets
+  }
   let x = STORE.get('dsh-manqu-pet:x', 24)
   let y = STORE.get('dsh-manqu-pet:y', null) // null = 贴底
-  const POPOVER_SPACE = 190 // 下方预留空间不足时，状态条/菜单改开在宠物上方
-  const BUBBLE_SPACE = 96 // 上方空间不足时，气泡改放到宠物下方
   const updatePlacement = () => {
     const height = host.offsetHeight
-    const top = y === null ? vh() - 16 - height : y
-    const spaceBelow = vh() - (top + height)
-    const spaceAbove = top
-    host.toggleAttribute('data-pop-above', spaceBelow < POPOVER_SPACE && spaceAbove > spaceBelow)
-    host.toggleAttribute('data-bubble-below', spaceAbove < BUBBLE_SPACE)
+    const top = y === null ? vh() - PET_BOTTOM_GAP - height : y
+    const { popAbove, bubbleBelow } = overlayPlacement({ top, height, viewportHeight: vh() })
+    host.toggleAttribute('data-pop-above', popAbove)
+    host.toggleAttribute('data-bubble-below', bubbleBelow)
   }
   const applyPos = () => {
+    // 隐藏时宿主是 display:none，offsetWidth/Height 为 0；此刻钳制会把记住的坐标改坏。
+    if (host.hasAttribute('data-hidden')) return
     if (y === null) {
-      // 贴底锚定：bottom:16px 与顶部壳层无关，只需钳制左右
-      x = clampX(x)
+      // 贴底锚定：bottom 与顶部壳层无关，只需钳制左右
+      x = clampPetX(x, host.offsetWidth, vw())
       host.style.left = `${x}px`
-      host.style.bottom = '16px'
+      host.style.bottom = `${PET_BOTTOM_GAP}px`
       host.style.top = 'auto'
     } else {
       // 绝对定位：既要在窗口内，也要避开桌面端标题栏安全区（旧坐标可能来自更大的窗口）
@@ -418,7 +431,7 @@ export function apply(ctx = {}) {
         if (wander === null) return
         if (Date.now() >= wander.until || dragging || look !== null) { wander = null; scheduleWander(); return }
         const delta = dir * WANDER_SPEED * 0.1
-        x = clampX(x + delta)
+        x = clampPetX(x + delta, host.offsetWidth, vw())
         applyPos()
         wanderStepTimer = setTimeout(step, 100)
       }
@@ -451,14 +464,14 @@ export function apply(ctx = {}) {
         } else {
           dragDir = dx >= 0 ? 1 : -1
         }
-        x = clampX(e.clientX - host.offsetWidth / 2)
-        const ny = e.clientY - host.offsetHeight / 2
         // 拖拽同样避开桌面端标题栏安全区：拖到窗口顶部也不会钻进原生按钮底下
-        y = clampPetPosition(
-          { x, y: ny, width: host.offsetWidth, height: host.offsetHeight },
+        const next = clampPetPosition(
+          { x: e.clientX - host.offsetWidth / 2, y: e.clientY - host.offsetHeight / 2, width: host.offsetWidth, height: host.offsetHeight },
           { viewportWidth: vw(), viewportHeight: vh() },
           shellInsetsNow(),
-        ).y
+        )
+        x = next.x
+        y = next.y
         applyPos()
       }
       press.px = e.clientX
@@ -566,6 +579,7 @@ export function apply(ctx = {}) {
   })
   restore.addEventListener('click', () => {
     host.removeAttribute('data-hidden')
+    applyPos() // 隐藏期间的窗口变化在恢复时补一次钳制
     restore.style.display = 'none'
     STORE.set('dsh-manqu-pet:hidden', false)
     transient = { id: 'waving', at: Date.now(), held: false }
@@ -600,12 +614,12 @@ export function apply(ctx = {}) {
     restore.style.display = ''
   }
   // 窗口尺寸变化（桌面端可自由缩放/最大化）：重钳 x 与 y，并避开壳层安全区。
-  const onResize = () => { applyPos() }
+  const onResize = () => { invalidateInsets(); applyPos() }
   window.addEventListener('resize', onResize)
   // 桌面端壳层状态变化（进出全屏、标题栏标记写入）不触发 resize，需要单独监听；
   // 全屏会把 Windows/macOS 的原生控件收起，安全区随之从 40/48 降到 20。
   const shellObserver = typeof MutationObserver === 'function'
-    ? new MutationObserver(() => { applyPos() })
+    ? new MutationObserver(() => { invalidateInsets(); applyPos() })
     : null
   shellObserver?.observe(document.documentElement, {
     attributes: true,
@@ -619,12 +633,14 @@ export function apply(ctx = {}) {
       clearLook()
       return
     }
+    invalidateInsets()
     startPolling()
     applyPos()
     refresh()
   }
   document.addEventListener('visibilitychange', onVisibilityChange)
-  startPolling()
+  // 启动时窗口已隐藏（桌面端从托盘/最小化恢复前）就先不轮询。
+  if (document.visibilityState !== 'hidden') startPolling()
   try {
     eventSource = new EventSource(EVENTS_PATH)
     eventSource.onmessage = () => {

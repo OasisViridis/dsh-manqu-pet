@@ -218,6 +218,7 @@ class FakeCanvas extends FakeElement {
  * @param {Record<string,string>} [options.dataset] - documentElement.dataset（platform 等）
  * @param {string[]} [options.attributes] - documentElement 上预置的属性（data-windows-titlebar / data-fullscreen）
  * @param {Record<string,string>} [options.cssVars] - getComputedStyle 可见的自定义属性
+ * @param {string} [options.visibility] - 初始 document.visibilityState（default: 'visible'）
  * @param {Record<string,string>} [options.storage] - localStorage 预置值
  */
 export function installFakeDom(options = {}) {
@@ -227,6 +228,7 @@ export function installFakeDom(options = {}) {
     dataset = {},
     attributes = [],
     cssVars = {},
+    visibility: initialVisibility = 'visible',
     storage: seed = {},
   } = options
 
@@ -234,7 +236,7 @@ export function installFakeDom(options = {}) {
   const windowListeners = new Map()
   const documentListeners = new Map()
   const intervals = new Set()
-  let visibility = 'visible'
+  let visibility = initialVisibility
 
   const makeElement = (tagName) => (tagName === 'canvas' ? new FakeCanvas() : new FakeElement(tagName))
 
@@ -242,7 +244,7 @@ export function installFakeDom(options = {}) {
   documentElement.observers = []
   for (const [key, value] of Object.entries(dataset)) documentElement.dataset[key] = value
   for (const name of attributes) documentElement.setAttribute(name, '')
-  documentElement.style.setProperty('--dsh-windows-titlebar-height', cssVars['--dsh-windows-titlebar-height'] ?? '')
+  for (const [name, value] of Object.entries(cssVars)) documentElement.style.setProperty(name, value)
 
   const head = new FakeElement('head')
   const body = new FakeElement('body')
@@ -308,34 +310,47 @@ export function installFakeDom(options = {}) {
     }
   }
 
-  class FakeEventSource {
-    constructor(url) {
-      this.url = url
-      this.onmessage = null
-    }
-
-    close() {
-      this.closed = true
-    }
-  }
-
   class FakeMutationObserver {
     constructor(callback) {
       this.callback = callback
       this.targets = []
     }
 
-    observe(target) {
+    // 记录 observe options：attributeFilter 内的标记才触发回调，避免假 DOM 放过写错的属性名。
+    observe(target, options = {}) {
       target.observers = target.observers ?? []
-      target.observers.push(this.callback)
+      target.observers.push({
+        callback: this.callback,
+        attributes: options.attributes !== false,
+        filter: Array.isArray(options.attributeFilter) ? options.attributeFilter : null,
+      })
       this.targets.push(target)
     }
 
     disconnect() {
       for (const target of this.targets) {
-        target.observers = (target.observers ?? []).filter((callback) => callback !== this.callback)
+        target.observers = (target.observers ?? []).filter((watcher) => watcher.callback !== this.callback)
       }
       this.targets = []
+    }
+  }
+
+  const eventSources = []
+  class FakeEventSource {
+    constructor(url) {
+      this.url = url
+      this.onmessage = null
+      this.closed = false
+      eventSources.push(this)
+    }
+
+    close() {
+      this.closed = true
+    }
+
+    /** 模拟服务端推送一条 SSE 消息（client 只看 onmessage，不看 data）。 */
+    emit(payload = {}) {
+      this.onmessage?.({ data: JSON.stringify(payload) })
     }
   }
 
@@ -402,6 +417,7 @@ export function installFakeDom(options = {}) {
     fetchCalls,
     storage,
     images,
+    eventSources,
     element: (selector) => document.querySelector(selector),
     /** 切换页面可见性并派发 visibilitychange（桌面端最小化/恢复）。 */
     setVisibility(next) {
@@ -414,11 +430,15 @@ export function installFakeDom(options = {}) {
       window.innerHeight = nextHeight
       for (const listener of windowListeners.get('resize') ?? []) listener({ type: 'resize' })
     },
-    /** 写入桌面端壳层标记（全屏切换）并触发 MutationObserver 观察到的属性变化。 */
-    setDocumentAttribute(name, enabled) {
-      if (enabled) documentElement.setAttribute(name, '')
+    /** 写入桌面端壳层标记并按 attributeFilter 通知 MutationObserver。 */
+    setDocumentAttribute(name, enabled, value = '') {
+      if (enabled) documentElement.setAttribute(name, value)
       else documentElement.removeAttribute(name)
-      for (const observer of documentElement.observers ?? []) observer()
+      for (const watcher of documentElement.observers ?? []) {
+        if (!watcher.attributes) continue
+        if (watcher.filter !== null && !watcher.filter.includes(name)) continue
+        watcher.callback([{ type: 'attributes', attributeName: name, target: documentElement }])
+      }
     },
     uninstall() {
       for (const id of [...intervals]) clearInterval(id)

@@ -143,24 +143,29 @@ function pickBaseState(mood, now = Date.now()) {
 }
 
 // .dsh-plugin/src/shell.mjs
-var PET_GAP = 4;
+var PET_GAP = 8;
 var WINDOWS_TITLEBAR_HEIGHT = 40;
 var MACOS_TOP_CLEARANCE = 48;
 var FULLSCREEN_TOP_CLEARANCE = 20;
+var PET_BOTTOM_GAP = 16;
+var POPOVER_SPACE = 190;
+var BUBBLE_SPACE = 96;
 var NO_INSETS = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
 var finiteOr = (value, fallback) => Number.isFinite(value) ? value : fallback;
 function shellEnvFrom(root, hint = {}) {
   if (root === null || typeof root !== "object") {
-    return { platform: "", windowsTitlebar: false, fullscreen: false, titlebarHeight: void 0 };
+    return { platform: "", windowsTitlebar: false, fullscreen: false, titlebarHeight: void 0, frameTopClearance: void 0 };
   }
   const dataset = root.dataset ?? {};
   const hasAttribute = typeof root.hasAttribute === "function" ? (name2) => root.hasAttribute(name2) === true : () => false;
   const height = Number.isFinite(hint.titlebarHeight) ? hint.titlebarHeight : void 0;
+  const clearance = Number.isFinite(hint.frameTopClearance) ? hint.frameTopClearance : void 0;
   return {
     platform: typeof dataset.platform === "string" ? dataset.platform : "",
     windowsTitlebar: hasAttribute("data-windows-titlebar"),
     fullscreen: hasAttribute("data-fullscreen"),
-    titlebarHeight: height
+    titlebarHeight: height,
+    frameTopClearance: clearance
   };
 }
 function shellInsets(env = {}) {
@@ -172,7 +177,8 @@ function shellInsets(env = {}) {
     const height = finiteOr(env.titlebarHeight, WINDOWS_TITLEBAR_HEIGHT);
     return { ...NO_INSETS, top: height > 0 ? height : WINDOWS_TITLEBAR_HEIGHT };
   }
-  return { ...NO_INSETS, top: MACOS_TOP_CLEARANCE };
+  const clearance = finiteOr(env.frameTopClearance, MACOS_TOP_CLEARANCE);
+  return { ...NO_INSETS, top: clearance > 0 ? clearance : MACOS_TOP_CLEARANCE };
 }
 var clampAxis = (value, min, max) => Math.min(max, Math.max(min, value));
 function clampPetX(x, width, viewportWidth, gap = PET_GAP) {
@@ -193,6 +199,17 @@ function clampPetPosition(rect = {}, viewport = {}, insets = NO_INSETS, gap = PE
   return {
     x: clampPetX(rect.x, width, vw, safeGap),
     y: clampAxis(finiteOr(rect.y, minY), minY, maxY)
+  };
+}
+function overlayPlacement(placement = {}) {
+  const top = finiteOr(placement.top, 0);
+  const height = Math.max(0, finiteOr(placement.height, 0));
+  const viewportHeight = Math.max(0, finiteOr(placement.viewportHeight, 0));
+  const spaceBelow = viewportHeight - (top + height);
+  const spaceAbove = top;
+  return {
+    popAbove: spaceBelow < POPOVER_SPACE && spaceAbove > spaceBelow,
+    bubbleBelow: spaceAbove < BUBBLE_SPACE
   };
 }
 
@@ -329,29 +346,40 @@ function apply(ctx = {}) {
   document.body.appendChild(restore);
   const vw = () => window.innerWidth;
   const vh = () => window.innerHeight;
-  const shellInsetsNow = () => {
-    const root = document.documentElement;
-    const cssHeight = Number.parseFloat(getComputedStyle(root).getPropertyValue("--dsh-windows-titlebar-height"));
-    return shellInsets(shellEnvFrom(root, { titlebarHeight: Number.isFinite(cssHeight) ? cssHeight : void 0 }));
+  const readPx = (style2, name2) => {
+    const value = Number.parseFloat(style2.getPropertyValue(name2));
+    return Number.isFinite(value) ? value : void 0;
   };
-  const clampX = (value) => clampPetX(value, host.offsetWidth, vw());
+  let cachedInsets = null;
+  const invalidateInsets = () => {
+    cachedInsets = null;
+  };
+  const shellInsetsNow = () => {
+    if (cachedInsets === null) {
+      const root = document.documentElement;
+      const style2 = getComputedStyle(root);
+      cachedInsets = shellInsets(shellEnvFrom(root, {
+        titlebarHeight: readPx(style2, "--dsh-windows-titlebar-height"),
+        frameTopClearance: readPx(style2, "--dsh-frame-top-clearance")
+      }));
+    }
+    return cachedInsets;
+  };
   let x = STORE.get("dsh-manqu-pet:x", 24);
   let y = STORE.get("dsh-manqu-pet:y", null);
-  const POPOVER_SPACE = 190;
-  const BUBBLE_SPACE = 96;
   const updatePlacement = () => {
     const height = host.offsetHeight;
-    const top = y === null ? vh() - 16 - height : y;
-    const spaceBelow = vh() - (top + height);
-    const spaceAbove = top;
-    host.toggleAttribute("data-pop-above", spaceBelow < POPOVER_SPACE && spaceAbove > spaceBelow);
-    host.toggleAttribute("data-bubble-below", spaceAbove < BUBBLE_SPACE);
+    const top = y === null ? vh() - PET_BOTTOM_GAP - height : y;
+    const { popAbove, bubbleBelow } = overlayPlacement({ top, height, viewportHeight: vh() });
+    host.toggleAttribute("data-pop-above", popAbove);
+    host.toggleAttribute("data-bubble-below", bubbleBelow);
   };
   const applyPos = () => {
+    if (host.hasAttribute("data-hidden")) return;
     if (y === null) {
-      x = clampX(x);
+      x = clampPetX(x, host.offsetWidth, vw());
       host.style.left = `${x}px`;
-      host.style.bottom = "16px";
+      host.style.bottom = `${PET_BOTTOM_GAP}px`;
       host.style.top = "auto";
     } else {
       const next = clampPetPosition(
@@ -587,7 +615,7 @@ function apply(ctx = {}) {
           return;
         }
         const delta = dir * WANDER_SPEED * 0.1;
-        x = clampX(x + delta);
+        x = clampPetX(x + delta, host.offsetWidth, vw());
         applyPos();
         wanderStepTimer = setTimeout(step, 100);
       };
@@ -618,13 +646,13 @@ function apply(ctx = {}) {
         } else {
           dragDir = dx >= 0 ? 1 : -1;
         }
-        x = clampX(e.clientX - host.offsetWidth / 2);
-        const ny = e.clientY - host.offsetHeight / 2;
-        y = clampPetPosition(
-          { x, y: ny, width: host.offsetWidth, height: host.offsetHeight },
+        const next = clampPetPosition(
+          { x: e.clientX - host.offsetWidth / 2, y: e.clientY - host.offsetHeight / 2, width: host.offsetWidth, height: host.offsetHeight },
           { viewportWidth: vw(), viewportHeight: vh() },
           shellInsetsNow()
-        ).y;
+        );
+        x = next.x;
+        y = next.y;
         applyPos();
       }
       press.px = e.clientX;
@@ -746,6 +774,7 @@ function apply(ctx = {}) {
   });
   restore.addEventListener("click", () => {
     host.removeAttribute("data-hidden");
+    applyPos();
     restore.style.display = "none";
     STORE.set("dsh-manqu-pet:hidden", false);
     transient = { id: "waving", at: Date.now(), held: false };
@@ -777,10 +806,12 @@ function apply(ctx = {}) {
     restore.style.display = "";
   }
   const onResize = () => {
+    invalidateInsets();
     applyPos();
   };
   window.addEventListener("resize", onResize);
   const shellObserver = typeof MutationObserver === "function" ? new MutationObserver(() => {
+    invalidateInsets();
     applyPos();
   }) : null;
   shellObserver?.observe(document.documentElement, {
@@ -794,12 +825,13 @@ function apply(ctx = {}) {
       clearLook();
       return;
     }
+    invalidateInsets();
     startPolling();
     applyPos();
     refresh();
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
-  startPolling();
+  if (document.visibilityState !== "hidden") startPolling();
   try {
     eventSource = new EventSource(EVENTS_PATH);
     eventSource.onmessage = () => {

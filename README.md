@@ -39,7 +39,7 @@ github:OasisViridis/dsh-manqu-pet
 本地开发用仓库绝对路径（插件页同样接受本地路径）：
 
 ```text
-D:\Project\GitProject\dsh-manqu-pet
+<仓库绝对路径>
 ```
 
 ### Web GUI（dsh CLI）
@@ -61,7 +61,7 @@ DSH 桌面端（Electron 外壳）加载的就是这套 Web GUI：客户端插�
 | 壳层事实 | 来源标记 | 插件行为 |
 |---|---|---|
 | Windows 标题栏按钮（`titleBarOverlay`，高 40px） | `data-windows-titlebar` + `--dsh-windows-titlebar-height` | 可拖拽区域钳制在该高度以下，宠物不会被最小化/最大化/关闭按钮盖住，也不会抢走窗口拖动 |
-| macOS 红绿灯 | `data-platform="darwin"` | 顶部 48px 安全区内不放宠物 |
+| macOS 红绿灯 | `data-platform="darwin"` + `--dsh-frame-top-clearance` | 顶部 48px（读宿主发布的变量，缺失时回落 48）安全区内不放宠物 |
 | 全屏（原生控件收起） | `data-fullscreen` | 安全区降到 20px，位置重新钳制 |
 | 窗口尺寸变化 / 最大化 | `resize` | x、y 一起重钳，记住的旧坐标不会留在窗口外 |
 | 最小化 / 隐藏 | `document.visibilityState` | 暂停 `/manqu/state` 轮询，恢复时立刻补一次 |

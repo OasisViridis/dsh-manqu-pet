@@ -9,6 +9,7 @@ import {
   shellInsets,
   clampPetX,
   clampPetPosition,
+  overlayPlacement,
 } from '../.dsh-plugin/src/shell.mjs'
 
 const fakeRoot = ({ platform, attributes = [] }) => ({
@@ -19,21 +20,21 @@ const fakeRoot = ({ platform, attributes = [] }) => ({
 test('shellEnvFrom：桌面端标记 → 壳层事实（Windows / macOS 全屏 / 浏览器）', () => {
   assert.deepEqual(
     shellEnvFrom(fakeRoot({ platform: 'win32', attributes: ['data-windows-titlebar'] }), { titlebarHeight: 40 }),
-    { platform: 'win32', windowsTitlebar: true, fullscreen: false, titlebarHeight: 40 },
+    { platform: 'win32', windowsTitlebar: true, fullscreen: false, titlebarHeight: 40, frameTopClearance: undefined },
   )
   assert.deepEqual(
     shellEnvFrom(fakeRoot({ platform: 'darwin', attributes: ['data-fullscreen'] })),
-    { platform: 'darwin', windowsTitlebar: false, fullscreen: true, titlebarHeight: undefined },
+    { platform: 'darwin', windowsTitlebar: false, fullscreen: true, titlebarHeight: undefined, frameTopClearance: undefined },
   )
   // 浏览器：没有任何桌面端标记
   assert.deepEqual(
     shellEnvFrom(fakeRoot({})),
-    { platform: '', windowsTitlebar: false, fullscreen: false, titlebarHeight: undefined },
+    { platform: '', windowsTitlebar: false, fullscreen: false, titlebarHeight: undefined, frameTopClearance: undefined },
   )
   // 无 documentElement（SSR/异常）不抛错
   assert.deepEqual(
     shellEnvFrom(null, { titlebarHeight: 44 }),
-    { platform: '', windowsTitlebar: false, fullscreen: false, titlebarHeight: undefined },
+    { platform: '', windowsTitlebar: false, fullscreen: false, titlebarHeight: undefined, frameTopClearance: undefined },
   )
 })
 
@@ -104,4 +105,38 @@ test('clampPetPosition：窗口过小时固定在安全区下沿，不被标题�
   // 无安全区时同样不产生负坐标
   const web = clampPetPosition({ x: -10, y: -10, width: 139, height: 150 }, { viewportWidth: 320, viewportHeight: 120 })
   assert.deepEqual(web, { x: PET_GAP, y: PET_GAP })
+})
+
+test('shellInsets：macOS 优先用 root 发布的 --dsh-frame-top-clearance，非法值回落 48', () => {
+  const withClearance = (frameTopClearance) => shellInsets({ platform: 'darwin', frameTopClearance }).top
+  assert.equal(withClearance(52), 52)
+  assert.equal(withClearance(0), MACOS_TOP_CLEARANCE)
+  assert.equal(withClearance(-1), MACOS_TOP_CLEARANCE)
+  assert.equal(withClearance(Number.NaN), MACOS_TOP_CLEARANCE)
+  assert.equal(withClearance(undefined), MACOS_TOP_CLEARANCE)
+})
+
+test('overlayPlacement：贴底或窗口较矮时菜单开上方，贴顶时气泡放下方', () => {
+  // 贴底：下方只有 16px 间距 → 菜单/状态条改开在上方，上方空间够 → 气泡照旧在上方
+  assert.deepEqual(
+    overlayPlacement({ top: 800 - 16 - 150, height: 150, viewportHeight: 800 }),
+    { popAbove: true, bubbleBelow: false },
+  )
+  // 贴顶：上方不够放气泡 → 气泡改放下方；下方空间大 → 菜单照旧在下方
+  assert.deepEqual(
+    overlayPlacement({ top: 44, height: 150, viewportHeight: 800 }),
+    { popAbove: false, bubbleBelow: true },
+  )
+  // 居中：两侧都够 → 保持默认（下方菜单、上方气泡）
+  assert.deepEqual(
+    overlayPlacement({ top: 300, height: 150, viewportHeight: 800 }),
+    { popAbove: false, bubbleBelow: false },
+  )
+  // 窗口过矮且宠物偏上：上方空间比下方多才改开在上方，避免两头都塞不下
+  assert.deepEqual(
+    overlayPlacement({ top: 200, height: 150, viewportHeight: 400 }),
+    { popAbove: true, bubbleBelow: false },
+  )
+  // 非法输入不产生 NaN
+  assert.deepEqual(overlayPlacement({}), { popAbove: false, bubbleBelow: true })
 })
