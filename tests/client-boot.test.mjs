@@ -171,8 +171,14 @@ test('启动时窗口已隐藏：先不轮询，恢复可见后开始', async (t
   t.after(() => { dispose(); dom.uninstall() })
 
   assert.equal(dom.intervals.size, 0, '隐藏启动不应建立轮询')
+  assert.equal(
+    dom.fetchCalls.some((url) => String(url).endsWith('/manqu/state')),
+    false,
+    '隐藏启动连初始状态都不拉，等恢复可见再补',
+  )
   dom.setVisibility('visible')
   assert.equal(dom.intervals.size, 1, '恢复可见后开始轮询')
+  assert.ok(dom.fetchCalls.some((url) => String(url).endsWith('/manqu/state')), '恢复可见后补一次状态')
 })
 
 test('隐藏时窗口缩放不改记住的坐标，恢复时重新钳制', async (t) => {

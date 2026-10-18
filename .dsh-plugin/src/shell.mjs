@@ -14,7 +14,10 @@
 // 本模块只做几何计算与标记解析，不访问真实 DOM 对象（可传假 documentElement），
 // 便于 node:test 单测；client 负责把结果写回宿主元素。
 
-/** 宠物与窗口边缘的最小间距（px），沿用 Web 端既有的 8px 边距。 */
+/**
+ * 宠物与窗口边缘的最小间距（px）。
+ * Web 端原有横向 8px 边距，这里统一成 8px（纵向由旧的 4px 一并收齐）。
+ */
 export const PET_GAP = 8
 
 /** Electron titleBarOverlay 的默认高度（px），与桌面外壳预加载写入的变量一致。 */
@@ -129,9 +132,11 @@ export function clampPetPosition(rect = {}, viewport = {}, insets = NO_INSETS, g
  * @returns {{popAbove: boolean, bubbleBelow: boolean}}
  */
 export function overlayPlacement(placement = {}) {
-  const top = finiteOr(placement.top, 0)
-  const height = Math.max(0, finiteOr(placement.height, 0))
   const viewportHeight = Math.max(0, finiteOr(placement.viewportHeight, 0))
+  // 视口未知（0）时保持默认方向，不凭 0 高度猜「上方更好」。
+  if (viewportHeight === 0) return { popAbove: false, bubbleBelow: false }
+  const top = Math.max(0, finiteOr(placement.top, 0))
+  const height = Math.max(0, finiteOr(placement.height, 0))
   const spaceBelow = viewportHeight - (top + height)
   const spaceAbove = top
   return {

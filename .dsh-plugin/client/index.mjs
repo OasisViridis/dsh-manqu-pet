@@ -648,7 +648,8 @@ export function apply(ctx = {}) {
     }
   } catch { /* SSE 不可用 → 纯轮询兜底 */ }
   loadAssets()
-  refresh()
+  // 隐藏启动（桌面端以最小化/托盘状态拉起）先不拉状态；恢复可见时 onVisibilityChange 会补一次。
+  if (document.visibilityState !== 'hidden') refresh()
   requestAnimationFrame(tick)
   scheduleWander()
 

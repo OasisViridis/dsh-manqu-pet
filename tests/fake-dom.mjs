@@ -321,7 +321,7 @@ export function installFakeDom(options = {}) {
       target.observers = target.observers ?? []
       target.observers.push({
         callback: this.callback,
-        attributes: options.attributes !== false,
+        attributes: options.attributes === true,
         filter: Array.isArray(options.attributeFilter) ? options.attributeFilter : null,
       })
       this.targets.push(target)

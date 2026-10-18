@@ -137,6 +137,6 @@ test('overlayPlacement：贴底或窗口较矮时菜单开上方，贴顶时气�
     overlayPlacement({ top: 200, height: 150, viewportHeight: 400 }),
     { popAbove: true, bubbleBelow: false },
   )
-  // 非法输入不产生 NaN
-  assert.deepEqual(overlayPlacement({}), { popAbove: false, bubbleBelow: true })
+  // 视口未知（0）时保持默认方向，不凭 0 高度猜「上方更好」
+  assert.deepEqual(overlayPlacement({}), { popAbove: false, bubbleBelow: false })
 })

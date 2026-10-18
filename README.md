@@ -80,7 +80,7 @@ node --test tests/*.test.mjs          # 纯逻辑单测
 
 - 改客户端逻辑 → 改 `.dsh-plugin/client/index.mjs` / `atlas.mjs`，重新 build。
 - 路由前缀单一来源：`.dsh-plugin/src/routes.mjs`。
-- 桌面端窗口几何（安全区/位置钳制）是纯函数：`.dsh-plugin/src/shell.mjs`，单测在 `tests/shell.test.mjs`。
+- 桌面端窗口几何（安全区/位置钳制/覆盖层开合方向）是纯函数：`.dsh-plugin/src/shell.mjs`，单测在 `tests/shell.test.mjs`。
 - 素材契约：`pet.json`（CodexPet manifest）+ `spritesheet.webp`（1536×2288，v2 图集）。
 
 ## 结构
@@ -95,7 +95,7 @@ node --test tests/*.test.mjs          # 纯逻辑单测
   src/
     routes.mjs       # 路由前缀单一来源
     state.mjs        # 情绪 → 基础状态纯函数（5 态；look/挥手/蠕动/散步由 client 本地覆盖）
-    shell.mjs        # 宿主窗口壳层（Web / 桌面端）安全区 + 位置钳制纯函数
+    shell.mjs        # 宿主窗口壳层（Web / 桌面端）安全区 + 位置钳制 + 覆盖层方向纯函数
     session-events.mjs  # turn 边沿解析
     assets.mjs       # assets 路径净化 + MIME
   assets/

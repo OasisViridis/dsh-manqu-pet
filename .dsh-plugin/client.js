@@ -202,9 +202,10 @@ function clampPetPosition(rect = {}, viewport = {}, insets = NO_INSETS, gap = PE
   };
 }
 function overlayPlacement(placement = {}) {
-  const top = finiteOr(placement.top, 0);
-  const height = Math.max(0, finiteOr(placement.height, 0));
   const viewportHeight = Math.max(0, finiteOr(placement.viewportHeight, 0));
+  if (viewportHeight === 0) return { popAbove: false, bubbleBelow: false };
+  const top = Math.max(0, finiteOr(placement.top, 0));
+  const height = Math.max(0, finiteOr(placement.height, 0));
   const spaceBelow = viewportHeight - (top + height);
   const spaceAbove = top;
   return {
@@ -840,7 +841,7 @@ function apply(ctx = {}) {
   } catch {
   }
   loadAssets();
-  refresh();
+  if (document.visibilityState !== "hidden") refresh();
   requestAnimationFrame(tick);
   scheduleWander();
   return () => {
