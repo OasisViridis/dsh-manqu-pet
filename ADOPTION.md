@@ -22,5 +22,5 @@ Git 版本: 2.54.0.windows.1
 | `scripts/check.sh` | project-owned | 项目权威验证入口(单测 + bundle 新鲜度 + 工作区卫生) |
 | `scripts/check.ps1` | project-owned | Windows 委托入口 |
 | `.github/pull_request_template.md` | project-owned | PR 正文契约模板 |
-| `.github/workflows/check.yml` | project-owned | 薄调用器 → `OasisSaber/TheMasterplan/...@v4.0.0`(policy-ref: v4.0.0) |
+| `.github/workflows/check.yml` | project-owned | 薄调用器 → `OasisViridis/TheMasterplan/...@v4.0.0`(policy-ref: v4.0.0) |
 | `.themasterplan/state.json` | project-owned | 采用状态(受 Git 跟踪) |

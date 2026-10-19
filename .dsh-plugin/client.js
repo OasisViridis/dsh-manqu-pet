@@ -142,6 +142,78 @@ function pickBaseState(mood, now = Date.now()) {
   return "idle";
 }
 
+// .dsh-plugin/src/shell.mjs
+var PET_GAP = 8;
+var WINDOWS_TITLEBAR_HEIGHT = 40;
+var MACOS_TOP_CLEARANCE = 48;
+var FULLSCREEN_TOP_CLEARANCE = 20;
+var PET_BOTTOM_GAP = 16;
+var POPOVER_SPACE = 190;
+var BUBBLE_SPACE = 96;
+var NO_INSETS = Object.freeze({ top: 0, right: 0, bottom: 0, left: 0 });
+var finiteOr = (value, fallback) => Number.isFinite(value) ? value : fallback;
+function shellEnvFrom(root, hint = {}) {
+  if (root === null || typeof root !== "object") {
+    return { platform: "", windowsTitlebar: false, fullscreen: false, titlebarHeight: void 0, frameTopClearance: void 0 };
+  }
+  const dataset = root.dataset ?? {};
+  const hasAttribute = typeof root.hasAttribute === "function" ? (name2) => root.hasAttribute(name2) === true : () => false;
+  const height = Number.isFinite(hint.titlebarHeight) ? hint.titlebarHeight : void 0;
+  const clearance = Number.isFinite(hint.frameTopClearance) ? hint.frameTopClearance : void 0;
+  return {
+    platform: typeof dataset.platform === "string" ? dataset.platform : "",
+    windowsTitlebar: hasAttribute("data-windows-titlebar"),
+    fullscreen: hasAttribute("data-fullscreen"),
+    titlebarHeight: height,
+    frameTopClearance: clearance
+  };
+}
+function shellInsets(env = {}) {
+  const platform = typeof env.platform === "string" ? env.platform : "";
+  const windowsTitlebar = env.windowsTitlebar === true;
+  if (platform !== "darwin" && !windowsTitlebar) return NO_INSETS;
+  if (env.fullscreen === true) return { ...NO_INSETS, top: FULLSCREEN_TOP_CLEARANCE };
+  if (windowsTitlebar) {
+    const height = finiteOr(env.titlebarHeight, WINDOWS_TITLEBAR_HEIGHT);
+    return { ...NO_INSETS, top: height > 0 ? height : WINDOWS_TITLEBAR_HEIGHT };
+  }
+  const clearance = finiteOr(env.frameTopClearance, MACOS_TOP_CLEARANCE);
+  return { ...NO_INSETS, top: clearance > 0 ? clearance : MACOS_TOP_CLEARANCE };
+}
+var clampAxis = (value, min, max) => Math.min(max, Math.max(min, value));
+function clampPetX(x, width, viewportWidth, gap = PET_GAP) {
+  const safeGap = Math.max(0, finiteOr(gap, PET_GAP));
+  const petWidth = Math.max(0, finiteOr(width, 0));
+  const vw = Math.max(0, finiteOr(viewportWidth, 0));
+  const maxX = Math.max(safeGap, vw - petWidth - safeGap);
+  return clampAxis(finiteOr(x, safeGap), safeGap, maxX);
+}
+function clampPetPosition(rect = {}, viewport = {}, insets = NO_INSETS, gap = PET_GAP) {
+  const safeGap = Math.max(0, finiteOr(gap, PET_GAP));
+  const width = Math.max(0, finiteOr(rect.width, 0));
+  const height = Math.max(0, finiteOr(rect.height, 0));
+  const vw = Math.max(0, finiteOr(viewport.viewportWidth, 0));
+  const vh = Math.max(0, finiteOr(viewport.viewportHeight, 0));
+  const minY = Math.max(0, finiteOr(insets?.top, 0) + safeGap);
+  const maxY = Math.max(minY, vh - height - safeGap);
+  return {
+    x: clampPetX(rect.x, width, vw, safeGap),
+    y: clampAxis(finiteOr(rect.y, minY), minY, maxY)
+  };
+}
+function overlayPlacement(placement = {}) {
+  const viewportHeight = Math.max(0, finiteOr(placement.viewportHeight, 0));
+  if (viewportHeight === 0) return { popAbove: false, bubbleBelow: false };
+  const top = Math.max(0, finiteOr(placement.top, 0));
+  const height = Math.max(0, finiteOr(placement.height, 0));
+  const spaceBelow = viewportHeight - (top + height);
+  const spaceAbove = top;
+  return {
+    popAbove: spaceBelow < POPOVER_SPACE && spaceAbove > spaceBelow,
+    bubbleBelow: spaceAbove < BUBBLE_SPACE
+  };
+}
+
 // .dsh-plugin/src/routes.mjs
 var ROUTE_PREFIX = "/manqu";
 var STATE_PATH = `${ROUTE_PREFIX}/state`;
@@ -161,10 +233,12 @@ var WANDER_MAX_WAIT = 42e3;
 var WANDER_SPEED = 46;
 var TRANSIENT_HOLD_MS = 500;
 var CSS = `
-[data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none; font-family: system-ui, sans-serif; }
+[data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none;
+  font-family: system-ui, sans-serif; -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] canvas.pet-canvas { display: block; width: 100%; height: 100%; pointer-events: none;
   image-rendering: auto; filter: drop-shadow(0 6px 10px rgba(0,0,0,.28)); }
-[data-dsh-manqu-pet] .pet-hitarea { position: absolute; inset: 0; cursor: grab; z-index: 2; }
+[data-dsh-manqu-pet] .pet-hitarea { position: absolute; inset: 0; cursor: grab; z-index: 2;
+  -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] .pet-hitarea.dragging { cursor: grabbing; }
 [data-dsh-manqu-pet] .pet-status { position: absolute; left: 50%; top: calc(100% + 10px); transform: translateX(-50%);
   width: max-content; max-width: 240px; padding: 5px 9px; border-radius: 10px; z-index: 3;
@@ -194,9 +268,14 @@ var CSS = `
 [data-dsh-manqu-pet] .pet-bubble { position: absolute; left: 50%; top: -12px; transform: translate(-50%, -100%);
   background: rgba(24,28,38,.94); color: #E8EBF2; font-size: 11px; padding: 4px 9px; border-radius: 10px;
   white-space: nowrap; pointer-events: none; z-index: 5; }
+/* \u8D34\u5E95\uFF08\u684C\u9762\u7AEF\u7A97\u53E3\u8F83\u77EE / \u62D6\u5230\u4E0B\u65B9\uFF09\u2192 \u72B6\u6001\u6761\u4E0E\u53F3\u952E\u83DC\u5355\u6539\u5F00\u5728\u5BA0\u7269\u4E0A\u65B9\uFF1B
+   \u8D34\u9876\uFF08\u88AB\u6807\u9898\u680F\u5B89\u5168\u533A\u63A8\u5230\u9876\u90E8\u9644\u8FD1\uFF09\u2192 \u6C14\u6CE1\u6539\u653E\u5230\u4E0B\u65B9\uFF0C\u907F\u514D\u6EA2\u51FA\u7A97\u53E3\u88AB\u88C1\u6389\u3002 */
+[data-dsh-manqu-pet][data-pop-above] .pet-status,
+[data-dsh-manqu-pet][data-pop-above] .pet-menu { top: auto; bottom: calc(100% + 10px); }
+[data-dsh-manqu-pet][data-bubble-below] .pet-bubble { top: calc(100% + 12px); transform: translate(-50%, 0); }
 [data-dsh-manqu-pet][data-hidden] { display: none; }
 [data-dsh-manqu-pet] .pet-restore { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
-  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer; -webkit-app-region: no-drag;
   background: rgba(24,28,38,.9); border: 1px solid rgba(255,255,255,.14); color: #E8EBF2; font-size: 12px;
   font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 @media (prefers-reduced-motion: reduce) { [data-dsh-manqu-pet] .pet-bubble { animation: none; } }
@@ -267,14 +346,55 @@ function apply(ctx = {}) {
   restore.style.display = "none";
   document.body.appendChild(restore);
   const vw = () => window.innerWidth;
-  const clampX = (x2) => Math.max(8, Math.min(vw() - host.offsetWidth - 8, x2));
+  const vh = () => window.innerHeight;
+  const readPx = (style2, name2) => {
+    const value = Number.parseFloat(style2.getPropertyValue(name2));
+    return Number.isFinite(value) ? value : void 0;
+  };
+  let cachedInsets = null;
+  const invalidateInsets = () => {
+    cachedInsets = null;
+  };
+  const shellInsetsNow = () => {
+    if (cachedInsets === null) {
+      const root = document.documentElement;
+      const style2 = getComputedStyle(root);
+      cachedInsets = shellInsets(shellEnvFrom(root, {
+        titlebarHeight: readPx(style2, "--dsh-windows-titlebar-height"),
+        frameTopClearance: readPx(style2, "--dsh-frame-top-clearance")
+      }));
+    }
+    return cachedInsets;
+  };
   let x = STORE.get("dsh-manqu-pet:x", 24);
   let y = STORE.get("dsh-manqu-pet:y", null);
+  const updatePlacement = () => {
+    const height = host.offsetHeight;
+    const top = y === null ? vh() - PET_BOTTOM_GAP - height : y;
+    const { popAbove, bubbleBelow } = overlayPlacement({ top, height, viewportHeight: vh() });
+    host.toggleAttribute("data-pop-above", popAbove);
+    host.toggleAttribute("data-bubble-below", bubbleBelow);
+  };
   const applyPos = () => {
-    x = clampX(x);
-    host.style.left = `${x}px`;
-    host.style.bottom = y === null ? "16px" : "auto";
-    host.style.top = y === null ? "auto" : `${y}px`;
+    if (host.hasAttribute("data-hidden")) return;
+    if (y === null) {
+      x = clampPetX(x, host.offsetWidth, vw());
+      host.style.left = `${x}px`;
+      host.style.bottom = `${PET_BOTTOM_GAP}px`;
+      host.style.top = "auto";
+    } else {
+      const next = clampPetPosition(
+        { x, y, width: host.offsetWidth, height: host.offsetHeight },
+        { viewportWidth: vw(), viewportHeight: vh() },
+        shellInsetsNow()
+      );
+      x = next.x;
+      y = next.y;
+      host.style.left = `${x}px`;
+      host.style.top = `${y}px`;
+      host.style.bottom = "auto";
+    }
+    updatePlacement();
   };
   applyPos();
   let pet = null;
@@ -317,7 +437,7 @@ function apply(ctx = {}) {
   let seenReadyUntil = 0;
   let readyUnread = false;
   let shownBubbleKey = "";
-  let refreshTimer = null;
+  let pollTimer = null;
   let refreshBusy = false;
   let eventSource = null;
   let welcomed = false;
@@ -373,6 +493,15 @@ function apply(ctx = {}) {
     } catch {
     } finally {
       refreshBusy = false;
+    }
+  };
+  const startPolling = () => {
+    if (pollTimer === null) pollTimer = setInterval(refresh, POLL_MS);
+  };
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer);
+      pollTimer = null;
     }
   };
   let dragging = false;
@@ -487,7 +616,7 @@ function apply(ctx = {}) {
           return;
         }
         const delta = dir * WANDER_SPEED * 0.1;
-        x = clampX(x + delta);
+        x = clampPetX(x + delta, host.offsetWidth, vw());
         applyPos();
         wanderStepTimer = setTimeout(step, 100);
       };
@@ -518,9 +647,13 @@ function apply(ctx = {}) {
         } else {
           dragDir = dx >= 0 ? 1 : -1;
         }
-        x = clampX(e.clientX - host.offsetWidth / 2);
-        const ny = e.clientY - host.offsetHeight / 2;
-        y = Math.max(4, Math.min(window.innerHeight - host.offsetHeight - 4, ny));
+        const next = clampPetPosition(
+          { x: e.clientX - host.offsetWidth / 2, y: e.clientY - host.offsetHeight / 2, width: host.offsetWidth, height: host.offsetHeight },
+          { viewportWidth: vw(), viewportHeight: vh() },
+          shellInsetsNow()
+        );
+        x = next.x;
+        y = next.y;
         applyPos();
       }
       press.px = e.clientX;
@@ -642,6 +775,7 @@ function apply(ctx = {}) {
   });
   restore.addEventListener("click", () => {
     host.removeAttribute("data-hidden");
+    applyPos();
     restore.style.display = "none";
     STORE.set("dsh-manqu-pet:hidden", false);
     transient = { id: "waving", at: Date.now(), held: false };
@@ -673,23 +807,45 @@ function apply(ctx = {}) {
     restore.style.display = "";
   }
   const onResize = () => {
-    x = clampX(x);
-    if (y !== null) y = Math.max(4, Math.min(window.innerHeight - host.offsetHeight - 4, y));
+    invalidateInsets();
     applyPos();
   };
   window.addEventListener("resize", onResize);
-  refreshTimer = setInterval(refresh, POLL_MS);
+  const shellObserver = typeof MutationObserver === "function" ? new MutationObserver(() => {
+    invalidateInsets();
+    applyPos();
+  }) : null;
+  shellObserver?.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-fullscreen", "data-windows-titlebar", "data-platform"]
+  });
+  window.addEventListener("fullscreenchange", onResize);
+  const onVisibilityChange = () => {
+    if (document.visibilityState !== "visible") {
+      stopPolling();
+      clearLook();
+      return;
+    }
+    invalidateInsets();
+    startPolling();
+    applyPos();
+    refresh();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  if (document.visibilityState !== "hidden") startPolling();
   try {
     eventSource = new EventSource(EVENTS_PATH);
-    eventSource.onmessage = () => refresh();
+    eventSource.onmessage = () => {
+      if (document.visibilityState !== "hidden") refresh();
+    };
   } catch {
   }
   loadAssets();
-  refresh();
+  if (document.visibilityState !== "hidden") refresh();
   requestAnimationFrame(tick);
   scheduleWander();
   return () => {
-    clearInterval(refreshTimer);
+    stopPolling();
     clearTimeout(wanderTimer);
     clearTimeout(wanderStepTimer);
     eventSource?.close();
@@ -702,6 +858,9 @@ function apply(ctx = {}) {
     document.documentElement.removeEventListener("mouseleave", clearLook);
     window.removeEventListener("blur", clearLook);
     window.removeEventListener("resize", onResize);
+    window.removeEventListener("fullscreenchange", onResize);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    shellObserver?.disconnect();
   };
 }
 var name = "dsh-manqu-pet";
