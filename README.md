@@ -75,12 +75,13 @@ DSH 桌面端（Electron 外壳）加载的就是这套 Web GUI：客户端插�
 npm i -D esbuild   # 首次
 node scripts/build-client.mjs        # 生成 .dsh-plugin/client.js
 node scripts/build-client.mjs --check  # 校验生成物新鲜（手改生成物禁止）
-node --test tests/*.test.mjs          # 纯逻辑单测
+node --test tests/*.test.mjs          # 单测（纯逻辑 + 打包契约）
 ```
 
 - 改客户端逻辑 → 改 `.dsh-plugin/client/index.mjs` / `atlas.mjs`，重新 build。
 - 路由前缀单一来源：`.dsh-plugin/src/routes.mjs`。
 - 桌面端窗口几何（安全区/位置钳制/覆盖层开合方向）是纯函数：`.dsh-plugin/src/shell.mjs`，单测在 `tests/shell.test.mjs`。
+- 客户端 half 组合契约：`.dsh-plugin/` 内不得再放与包同名的 `package.json`（会顶替根部清单成为宿主解析出的归属清单，客户端 half 被直接跳过，宠物不显示）；守卫在 `tests/client-composition.test.mjs`。
 - 素材契约：`pet.json`（CodexPet manifest）+ `spritesheet.webp`（1536×2288，v2 图集）。
 
 ## 结构
