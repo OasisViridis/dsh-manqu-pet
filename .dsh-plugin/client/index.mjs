@@ -71,7 +71,10 @@ const CSS = `
 [data-dsh-manqu-pet][data-pop-above] .pet-menu { top: auto; bottom: calc(100% + 10px); }
 [data-dsh-manqu-pet][data-bubble-below] .pet-bubble { top: calc(100% + 12px); transform: translate(-50%, 0); }
 [data-dsh-manqu-pet][data-hidden] { display: none; }
-[data-dsh-manqu-pet] .pet-restore { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+/* 恢复按钮挂在 body 上（host 隐藏时是 display:none，塞不进 host），样式锚点必须是按钮
+   自身：写成 [data-dsh-manqu-pet] .pet-restore 这种后代选择器时规则永远不命中，按钮
+   会退化成文档流里一行裸文字，被应用根容器盖住，用户就找不到了。 */
+[data-dsh-manqu-pet-restore] { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
   padding: 6px 12px; border-radius: 999px; cursor: pointer; -webkit-app-region: no-drag;
   background: rgba(24,28,38,.9); border: 1px solid rgba(255,255,255,.14); color: #E8EBF2; font-size: 12px;
   font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
@@ -135,6 +138,7 @@ export function apply(ctx = {}) {
   host.append(canvas, hitarea, status, menu)
   const restore = document.createElement('div')
   restore.className = 'pet-restore'
+  restore.setAttribute('data-dsh-manqu-pet-restore', '')
   restore.textContent = '🐛 满区'
   restore.style.display = 'none'
   document.body.appendChild(restore)

@@ -274,7 +274,10 @@ var CSS = `
 [data-dsh-manqu-pet][data-pop-above] .pet-menu { top: auto; bottom: calc(100% + 10px); }
 [data-dsh-manqu-pet][data-bubble-below] .pet-bubble { top: calc(100% + 12px); transform: translate(-50%, 0); }
 [data-dsh-manqu-pet][data-hidden] { display: none; }
-[data-dsh-manqu-pet] .pet-restore { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+/* \u6062\u590D\u6309\u94AE\u6302\u5728 body \u4E0A\uFF08host \u9690\u85CF\u65F6\u662F display:none\uFF0C\u585E\u4E0D\u8FDB host\uFF09\uFF0C\u6837\u5F0F\u951A\u70B9\u5FC5\u987B\u662F\u6309\u94AE
+   \u81EA\u8EAB\uFF1A\u5199\u6210 [data-dsh-manqu-pet] .pet-restore \u8FD9\u79CD\u540E\u4EE3\u9009\u62E9\u5668\u65F6\u89C4\u5219\u6C38\u8FDC\u4E0D\u547D\u4E2D\uFF0C\u6309\u94AE
+   \u4F1A\u9000\u5316\u6210\u6587\u6863\u6D41\u91CC\u4E00\u884C\u88F8\u6587\u5B57\uFF0C\u88AB\u5E94\u7528\u6839\u5BB9\u5668\u76D6\u4F4F\uFF0C\u7528\u6237\u5C31\u627E\u4E0D\u5230\u4E86\u3002 */
+[data-dsh-manqu-pet-restore] { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
   padding: 6px 12px; border-radius: 999px; cursor: pointer; -webkit-app-region: no-drag;
   background: rgba(24,28,38,.9); border: 1px solid rgba(255,255,255,.14); color: #E8EBF2; font-size: 12px;
   font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
@@ -342,6 +345,7 @@ function apply(ctx = {}) {
   host.append(canvas, hitarea, status, menu);
   const restore = document.createElement("div");
   restore.className = "pet-restore";
+  restore.setAttribute("data-dsh-manqu-pet-restore", "");
   restore.textContent = "\u{1F41B} \u6EE1\u533A";
   restore.style.display = "none";
   document.body.appendChild(restore);
