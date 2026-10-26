@@ -21,6 +21,7 @@
 | 拖拽 | 一拱一拱地蠕动（`running-left`/`running-right` 快放） |
 | 空闲 | 随机散步（左右蠕动横移） |
 | 右键菜单 | 活动托盘（各会话/任务实时状态：等待批准=橙点，运行=蓝点）+ 打招呼/跳一下/隐藏 |
+| 设置 → **满区 Manqu** | 显示/隐藏、大小、归位、散步与视线跟随开关（和其他 DSH 插件同一个菜单位） |
 
 桌面端（DSH Desktop）额外行为：宠物被钳制在窗口内并避开原生窗口按钮区（Windows 顶部 40px 标题栏按钮、macOS 红绿灯，全屏时安全区自动收起）；拖到窗口顶部不会钻到按钮底下，关掉再开也会把记住的旧坐标拉回可视区；窗口最小化/隐藏时暂停状态轮询。
 
@@ -52,7 +53,20 @@ dsh plugin --profile web add "github:OasisViridis/dsh-manqu-pet"
 dsh plugin --profile web add "<仓库绝对路径>"
 ```
 
-装完**重启宿主**（bundle 层在启动时合成），窗口左下角出现满区：点击打招呼、双击跳跃、拖拽移动（拖动时蠕动）、鼠标靠近视线跟随、右键菜单（打招呼/跳一下/隐藏）。位置与隐藏状态保存在 localStorage（`dsh-manqu-pet:*`）。
+装完**重启宿主**（bundle 层在启动时合成），窗口左下角出现满区：点击打招呼、双击跳跃、拖拽移动（拖动时蠕动）、鼠标靠近视线跟随、右键菜单（打招呼/跳一下/隐藏）。位置与偏好保存在 localStorage（`dsh-manqu-pet:*`）。
+
+## 设置面板
+
+插件在 DSH 设置面板里注册了一个 **`settings.section`**（`满区 Manqu`），和「省钱插件」「Our Free Model」「可视化」同一种形态，不是宠物本体的右键菜单：
+
+| 项 | 作用 |
+|---|---|
+| 显示满区 | 关掉 = 从窗口左下角消失；打开 = 立刻回来。隐藏后不再需要去角落里找按钮 |
+| 回到默认位置 | 拖丢了就贴回左下角贴底 |
+| 大小 | 110–260px（默认 150），改了当场缩放 |
+| 空闲散步 / 视线跟随 | 分开关；影响后续动作调度，不动当前显示 |
+
+实现上是两条互不依赖的路径共用一份偏好：宠物是纯 DOM，设置页是 React 组件，中间靠 `client/prefs.mjs` 的模块单例 + localStorage。**拿不到 React 或宿主没有 `slots` 服务时整个设置页不注册**，此时隐藏后仍会退回右下角的恢复按钮（`data-dsh-manqu-pet-restore`），老宿主不会失去出口。
 
 ## 桌面端适配
 
@@ -91,7 +105,9 @@ node --test tests/*.test.mjs          # 单测（纯逻辑 + 打包契约）
   index.mjs          # Node half：/manqu/state 情绪聚合 + /manqu/assets + /manqu/events(SSE)
   client.js          # client bundle（esbuild 产物，勿手改）
   client/
-    index.mjs        # 浏览器 half：图集播放器 + 交互
+    index.mjs        # 浏览器 half：图集播放器 + 交互 + 设置页注册
+    prefs.mjs        # 偏好存储（localStorage 单例 + 订阅），宠物与设置页共用
+    settings-section.mjs  # 设置面板里的「满区 Manqu」分区（React 组件 + 样式）
     atlas.mjs        # CodexPet v2 图集纯逻辑（状态表/帧检测/方向）
   src/
     routes.mjs       # 路由前缀单一来源

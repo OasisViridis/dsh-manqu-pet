@@ -11,6 +11,9 @@ const ROOT = resolve(import.meta.dirname, '..')
 const ENTRY = '.dsh-plugin/client/index.mjs'
 const OUTPUT = join(ROOT, '.dsh-plugin', 'client.js')
 
+/** 插件版本以 package.json 为准，构建时注入给设置页页脚（浏览器读不到 package.json）。 */
+const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
+
 async function bundle() {
   const res = await build({
     entryPoints: [ENTRY],
@@ -20,6 +23,9 @@ async function bundle() {
     target: 'es2020',
     write: false,
     logLevel: 'silent',
+    // react 由宿主 ModuleLoader 的 factory 参数 require 注入，不能打进 bundle。
+    external: ['react'],
+    define: { __MANQU_VERSION__: JSON.stringify(VERSION) },
   })
   return res.outputFiles[0].text
 }

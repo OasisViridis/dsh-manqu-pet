@@ -24,7 +24,9 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // .dsh-plugin/client/index.mjs
 var index_exports = {};
 __export(index_exports, {
+  __setReactForTest: () => __setReactForTest,
   apply: () => apply,
+  inject: () => inject,
   name: () => name
 });
 module.exports = __toCommonJS(index_exports);
@@ -220,9 +222,291 @@ var STATE_PATH = `${ROUTE_PREFIX}/state`;
 var ASSETS_PATH = `${ROUTE_PREFIX}/assets`;
 var EVENTS_PATH = `${ROUTE_PREFIX}/events`;
 
+// .dsh-plugin/client/prefs.mjs
+var SIZE_MIN = 110;
+var SIZE_MAX = 260;
+var SIZE_DEFAULT = 150;
+var PREF_KEYS = Object.freeze({
+  hidden: "dsh-manqu-pet:hidden",
+  size: "dsh-manqu-pet:size",
+  wander: "dsh-manqu-pet:wander",
+  look: "dsh-manqu-pet:look"
+});
+var STORE = {
+  get(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+    }
+  }
+};
+var clampSize = (value) => {
+  const n = typeof value === "number" ? value : Number.parseFloat(value);
+  if (!Number.isFinite(n)) return SIZE_DEFAULT;
+  return Math.min(SIZE_MAX, Math.max(SIZE_MIN, Math.round(n)));
+};
+var readFlag = (key) => STORE.get(key, true) !== false;
+function readPrefs() {
+  return {
+    visible: STORE.get(PREF_KEYS.hidden, false) !== true,
+    size: clampSize(STORE.get(PREF_KEYS.size, SIZE_DEFAULT)),
+    wander: readFlag(PREF_KEYS.wander),
+    look: readFlag(PREF_KEYS.look)
+  };
+}
+var snapshot = readPrefs();
+var listeners = /* @__PURE__ */ new Set();
+var emit = (detail = {}) => {
+  snapshot = readPrefs();
+  for (const listener of [...listeners]) {
+    try {
+      listener({ prefs: snapshot, ...detail });
+    } catch (error) {
+      console.warn("[dsh-manqu-pet] \u504F\u597D\u76D1\u542C\u5668\u629B\u9519\uFF1A", error);
+    }
+  }
+};
+function updatePrefs(patch = {}) {
+  if (typeof patch.visible === "boolean") STORE.set(PREF_KEYS.hidden, !patch.visible);
+  if (patch.size !== void 0) STORE.set(PREF_KEYS.size, clampSize(patch.size));
+  if (typeof patch.wander === "boolean") STORE.set(PREF_KEYS.wander, patch.wander);
+  if (typeof patch.look === "boolean") STORE.set(PREF_KEYS.look, patch.look);
+  emit();
+  return snapshot;
+}
+function resetPosition() {
+  writePosition(24, null);
+  emit({ resetPosition: true });
+  return snapshot;
+}
+function readPosition() {
+  return {
+    x: STORE.get("dsh-manqu-pet:x", 24),
+    y: STORE.get("dsh-manqu-pet:y", null)
+  };
+}
+function writePosition(x, y) {
+  STORE.set("dsh-manqu-pet:x", x);
+  STORE.set("dsh-manqu-pet:y", y);
+}
+function subscribePrefs(listener) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+// .dsh-plugin/client/settings-section.mjs
+var SECTION_ID = "manqu";
+var SECTION_ORDER = 92;
+var SECTION_LABEL = "\u6EE1\u533A Manqu";
+var VERSION = false ? "dev" : "0.4.0";
+var VERSION_LABEL = VERSION === "dev" ? "\u5F00\u53D1\u7248" : `v${VERSION}`;
+var CSS = `
+[data-manqu-section] { display: flex; flex-direction: column; gap: 16px; padding: 4px 2px 28px;
+  font-family: system-ui, sans-serif; color: var(--dsw-alias-label-primary, #e8ebf2); }
+[data-manqu-section] * { box-sizing: border-box; }
+[data-manqu-section] .manqu-hero { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+  padding: 18px 20px; border-radius: 16px; border: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.1));
+  background: linear-gradient(140deg, color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b8cff) 12%, transparent), transparent 62%),
+    var(--dsw-alias-bg-layer-2, rgba(255,255,255,.03)); }
+[data-manqu-section] .manqu-hero-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+[data-manqu-section] .manqu-hero h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 0; line-height: 1.25; }
+[data-manqu-section] .manqu-hero p { margin: 0; font-size: 12.5px; line-height: 1.6;
+  color: var(--dsw-alias-label-secondary, #9aa3b2); max-width: 62ch; }
+[data-manqu-section] .manqu-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 11.5px; white-space: nowrap;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.12));
+  color: var(--dsw-alias-label-secondary, #9aa3b2); }
+[data-manqu-section] .manqu-state .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+[data-manqu-section] .manqu-state.on { color: var(--dsw-alias-state-success-primary, #4ec98c);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary, #4ec98c) 42%, transparent); }
+
+[data-manqu-section] .manqu-card { display: flex; flex-direction: column; gap: 2px; padding: 6px 18px;
+  border-radius: 14px; border: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.1));
+  background: var(--dsw-alias-bg-layer-2, rgba(255,255,255,.03)); }
+[data-manqu-section] .manqu-card > h3 { margin: 12px 0 2px; font-size: 11px; font-weight: 620;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary, #7c8496); }
+
+[data-manqu-section] .manqu-row { display: flex; align-items: center; gap: 14px; padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--dsw-alias-border-l2, rgba(255,255,255,.1)) 60%, transparent); }
+[data-manqu-section] .manqu-card > h3 + .manqu-row { border-top: 0; }
+[data-manqu-section] .manqu-row-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+[data-manqu-section] .manqu-row-text b { font-size: 13px; font-weight: 560; }
+[data-manqu-section] .manqu-row-text span { font-size: 11.5px; line-height: 1.5;
+  color: var(--dsw-alias-label-tertiary, #7c8496); }
+
+[data-manqu-section] .manqu-switch { flex: none; width: 40px; height: 23px; padding: 0; border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.16)); cursor: pointer;
+  background: var(--dsw-alias-bg-layer-3, rgba(255,255,255,.08)); position: relative;
+  transition: background .16s ease-out, border-color .16s ease-out; }
+[data-manqu-section] .manqu-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+  border-radius: 50%; background: var(--dsw-alias-label-tertiary, #7c8496);
+  transition: transform .18s cubic-bezier(.34,1.3,.4,1), background .16s ease-out; }
+[data-manqu-section] .manqu-switch.on { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b8cff) 84%, transparent);
+  border-color: transparent; }
+[data-manqu-section] .manqu-switch.on::after { transform: translateX(17px); background: var(--dsw-alias-label-on-accent, #fff); }
+[data-manqu-section] .manqu-switch:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #5b8cff); outline-offset: 2px; }
+
+[data-manqu-section] .manqu-range { display: flex; align-items: center; gap: 12px; flex: none; }
+[data-manqu-section] .manqu-range input[type="range"] { width: 168px; accent-color: var(--dsw-alias-state-business-primary, #5b8cff); }
+[data-manqu-section] .manqu-range output { min-width: 46px; text-align: right; font-size: 12px;
+  font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary, #9aa3b2); }
+
+[data-manqu-section] .manqu-btn { flex: none; padding: 6px 13px; border-radius: 9px; font-size: 12px; cursor: pointer;
+  color: var(--dsw-alias-label-primary, #e8ebf2); font-family: inherit;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.14));
+  background: var(--dsw-alias-bg-layer-3, rgba(255,255,255,.06)); }
+[data-manqu-section] .manqu-btn:hover { border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #5b8cff) 48%, transparent); }
+[data-manqu-section] .manqu-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary, #5b8cff); outline-offset: 2px; }
+
+[data-manqu-section] .manqu-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 0 4px; font-size: 11.5px; color: var(--dsw-alias-label-tertiary, #7c8496); }
+[data-manqu-section] .manqu-foot code { font-size: 11px; padding: 2px 6px; border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3, rgba(255,255,255,.06)); color: var(--dsw-alias-label-secondary, #9aa3b2); }
+[data-manqu-section] .manqu-foot .sep { opacity: .5; }
+[data-manqu-section] .manqu-motto { margin-left: auto; font-style: italic; opacity: .72; }
+`;
+var ensureCss = (doc) => {
+  const id = "dsh-manqu-pet-settings-css";
+  const existing = typeof doc.getElementById === "function" ? doc.getElementById(id) : doc.querySelector(`#${id}`);
+  if (existing != null) return;
+  const style = doc.createElement("style");
+  style.id = id;
+  style.textContent = CSS;
+  doc.head.appendChild(style);
+};
+function createSettingsSection(React2) {
+  const h = React2.createElement;
+  const { useState, useEffect } = React2;
+  const Row = ({ title, hint, control }) => h(
+    "div",
+    { className: "manqu-row" },
+    h("div", { className: "manqu-row-text" }, h("b", null, title), h("span", null, hint)),
+    control
+  );
+  const Switch = ({ on, onChange, label }) => h("button", {
+    type: "button",
+    role: "switch",
+    "aria-checked": on === true,
+    "aria-label": label,
+    className: `manqu-switch${on ? " on" : ""}`,
+    onClick: () => onChange(!on)
+  });
+  const SettingsSection = () => {
+    const [prefs, setPrefs] = useState(() => readPrefs());
+    useEffect(() => subscribePrefs(({ prefs: next }) => setPrefs(next)), []);
+    ensureCss(document);
+    return h(
+      "div",
+      { "data-manqu-section": "", "data-section-id": SECTION_ID },
+      h(
+        "header",
+        { className: "manqu-hero" },
+        h(
+          "div",
+          { className: "manqu-hero-text" },
+          h("h2", null, "\u6EE1\u533A Manqu"),
+          h("p", null, "\u4E00\u53EA\u4F4F\u5728 DSH \u91CC\u7684 CodexPet\u3002\u6C38\u8FDC 16 \u5C81\u7684\u98CE\u7EAA\u59D4\u5458\uFF0C\u8BDD\u4E0D\u591A\u3001\u5634\u786C\uFF0C\u4F1A\u8DDF\u7740\u4F60\u4E00\u8D77\u5E72\u6D3B\u3002")
+        ),
+        h(
+          "span",
+          { className: `manqu-state${prefs.visible ? " on" : ""}` },
+          h("span", { className: "dot" }),
+          prefs.visible ? "\u6B63\u5728\u663E\u793A" : "\u5DF2\u9690\u85CF"
+        )
+      ),
+      h(
+        "section",
+        { className: "manqu-card" },
+        h("h3", null, "\u663E\u793A"),
+        h(Row, {
+          title: "\u663E\u793A\u6EE1\u533A",
+          hint: "\u5173\u6389\u5C31\u4ECE\u7A97\u53E3\u5DE6\u4E0B\u89D2\u6D88\u5931\u3002\u8981\u53EB\u56DE\u6765\u5728\u8FD9\u91CC\u5F00\u2014\u2014\u4E0D\u7528\u518D\u53BB\u7FFB\u5C4F\u5E55\u89D2\u843D\u627E\u6309\u94AE\u3002",
+          control: h(Switch, { on: prefs.visible, label: "\u663E\u793A\u6EE1\u533A", onChange: (next) => updatePrefs({ visible: next }) })
+        }),
+        h(Row, {
+          title: "\u56DE\u5230\u9ED8\u8BA4\u4F4D\u7F6E",
+          hint: "\u62D6\u4E22\u4E86\u3001\u88AB\u522B\u7684\u7A97\u53E3\u538B\u4F4F\uFF0C\u5C31\u6309\u8FD9\u4E2A\u8BA9\u5B83\u8D34\u56DE\u5DE6\u4E0B\u89D2\u3002",
+          control: h("button", { type: "button", className: "manqu-btn", onClick: () => resetPosition() }, "\u5F52\u4F4D")
+        })
+      ),
+      h(
+        "section",
+        { className: "manqu-card" },
+        h("h3", null, "\u5916\u89C2"),
+        h(Row, {
+          title: "\u5927\u5C0F",
+          hint: `${SIZE_MIN}\u2013${SIZE_MAX}px\uFF0C\u9ED8\u8BA4 150px\u3002\u5C0F\u7A97\u53E3\u5EFA\u8BAE\u538B\u5230 120 \u4E0A\u4E0B\u3002`,
+          control: h(
+            "div",
+            { className: "manqu-range" },
+            h("input", {
+              type: "range",
+              min: SIZE_MIN,
+              max: SIZE_MAX,
+              step: 5,
+              value: prefs.size,
+              "aria-label": "\u6EE1\u533A\u5927\u5C0F",
+              onChange: (event) => updatePrefs({ size: Number(event.target.value) })
+            }),
+            h("output", null, `${prefs.size}px`)
+          )
+        })
+      ),
+      h(
+        "section",
+        { className: "manqu-card" },
+        h("h3", null, "\u5C0F\u52A8\u4F5C"),
+        h(Row, {
+          title: "\u7A7A\u95F2\u6563\u6B65",
+          hint: "\u95F2\u7740\u7684\u65F6\u5019\u6CBF\u7740\u7A97\u53E3\u5E95\u90E8\u6765\u56DE\u8815\u52A8\uFF0C\u649E\u5230\u8FB9\u5C31\u81EA\u5DF1\u6389\u5934\u3002",
+          control: h(Switch, { on: prefs.wander, label: "\u7A7A\u95F2\u6563\u6B65", onChange: (next) => updatePrefs({ wander: next }) })
+        }),
+        h(Row, {
+          title: "\u89C6\u7EBF\u8DDF\u968F",
+          hint: "\u9F20\u6807\u9760\u8FD1\u65F6\u5B83\u4F1A\u770B\u7740\u4F60\uFF1B\u8D70\u5F00\u5C31\u8F6C\u56DE\u5F85\u673A\u3002",
+          control: h(Switch, { on: prefs.look, label: "\u89C6\u7EBF\u8DDF\u968F", onChange: (next) => updatePrefs({ look: next }) })
+        })
+      ),
+      h(
+        "div",
+        { className: "manqu-foot" },
+        h("span", null, VERSION_LABEL),
+        h("span", { className: "sep" }, "\xB7"),
+        h("span", null, "\u914D\u7F6E\u5B58\u5728\u672C\u673A"),
+        h("code", null, "dsh-manqu-pet:*"),
+        h("span", { className: "sep" }, "\xB7"),
+        h("span", { className: "manqu-motto" }, "\u7EFF\u51BB\u6C38\u8FDC\u662F\u7070\u6CFD\u6EE1\u7684\u7B2C\u4E8C\u9009\u62E9")
+      )
+    );
+  };
+  return SettingsSection;
+}
+
 // .dsh-plugin/client/index.mjs
+var HOST_REQUIRE = typeof require === "function" ? require : null;
+var React = null;
+try {
+  React = HOST_REQUIRE === null ? null : HOST_REQUIRE("react");
+} catch {
+  React = null;
+}
+function __setReactForTest(reactModule) {
+  React = reactModule;
+}
+var name = "dsh-manqu-pet";
+var inject = ["slots"];
 var ASSETS_URL = ASSETS_PATH;
-var PET_HEIGHT = 150;
+var CELL_ASPECT = CELL_WIDTH / CELL_HEIGHT;
 var DPR = Math.min(window.devicePixelRatio || 1, 3);
 var REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 var LOOK_RADIUS = 520;
@@ -232,7 +516,7 @@ var WANDER_MIN_WAIT = 2e4;
 var WANDER_MAX_WAIT = 42e3;
 var WANDER_SPEED = 46;
 var TRANSIENT_HOLD_MS = 500;
-var CSS = `
+var CSS2 = `
 [data-dsh-manqu-pet] { position: fixed; z-index: 2147483000; user-select: none; touch-action: none;
   font-family: system-ui, sans-serif; -webkit-app-region: no-drag; }
 [data-dsh-manqu-pet] canvas.pet-canvas { display: block; width: 100%; height: 100%; pointer-events: none;
@@ -283,36 +567,39 @@ var CSS = `
   font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
 @media (prefers-reduced-motion: reduce) { [data-dsh-manqu-pet] .pet-bubble { animation: none; } }
 `;
-var STORE = {
-  get(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw === null ? fallback : JSON.parse(raw);
-    } catch {
-      return fallback;
-    }
-  },
-  set(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-    }
-  }
-};
 function apply(ctx = {}) {
   if (document.querySelector("[data-dsh-manqu-pet]") !== null) {
     console.warn("[dsh-manqu-pet] apply \u5DF2\u5B58\u5728\u5B9E\u4F8B\uFF0C\u8DF3\u8FC7\u91CD\u590D\u6302\u8F7D");
     return () => {
     };
   }
+  const prefs = readPrefs();
+  let settingsSection = false;
+  if (React !== null && typeof ctx?.slots?.inject === "function") {
+    try {
+      ctx.slots.inject("settings.section", () => ctx.slots.register({
+        name: "settings.section",
+        id: SECTION_ID,
+        order: SECTION_ORDER,
+        label: () => SECTION_LABEL
+      }, createSettingsSection(React)));
+      settingsSection = true;
+    } catch (error) {
+      console.warn("[dsh-manqu-pet] \u8BBE\u7F6E\u9875\u6CE8\u518C\u5931\u8D25\uFF0C\u9000\u56DE\u53F3\u4E0B\u89D2\u6062\u590D\u6309\u94AE\uFF1A", error);
+    }
+  }
   const style = document.createElement("style");
-  style.textContent = CSS;
+  style.textContent = CSS2;
   document.head.appendChild(style);
   const host = document.createElement("div");
   host.setAttribute("data-dsh-manqu-pet", "");
   host.setAttribute("role", "group");
   host.setAttribute("aria-label", "\u6EE1\u533A Manqu \u684C\u9762\u5BA0\u7269");
-  host.style.cssText = `width: ${PET_HEIGHT * (CELL_WIDTH / CELL_HEIGHT)}px; height: ${PET_HEIGHT}px;`;
+  const applySize = (size) => {
+    host.style.width = `${size * CELL_ASPECT}px`;
+    host.style.height = `${size}px`;
+  };
+  applySize(prefs.size);
   document.body.appendChild(host);
   const canvas = document.createElement("canvas");
   canvas.className = "pet-canvas";
@@ -370,8 +657,9 @@ function apply(ctx = {}) {
     }
     return cachedInsets;
   };
-  let x = STORE.get("dsh-manqu-pet:x", 24);
-  let y = STORE.get("dsh-manqu-pet:y", null);
+  const saved = readPosition();
+  let x = saved.x;
+  let y = saved.y;
   const updatePlacement = () => {
     const height = host.offsetHeight;
     const top = y === null ? vh() - PET_BOTTOM_GAP - height : y;
@@ -401,6 +689,33 @@ function apply(ctx = {}) {
     updatePlacement();
   };
   applyPos();
+  let wanderEnabled = prefs.wander;
+  let lookEnabled = prefs.look;
+  const applyVisibility = (visible) => {
+    host.toggleAttribute("data-hidden", !visible);
+    if (visible) {
+      restore.style.display = "none";
+      applyPos();
+      return;
+    }
+    restore.style.display = settingsSection ? "none" : "";
+  };
+  const unsubscribePrefs = subscribePrefs(({ prefs: next, resetPosition: didReset }) => {
+    applySize(next.size);
+    applyVisibility(next.visible);
+    wanderEnabled = next.wander;
+    lookEnabled = next.look;
+    if (!next.wander) {
+      wander = null;
+      clearTimeout(wanderStepTimer);
+    }
+    if (!next.look) look = null;
+    if (didReset === true) {
+      x = 24;
+      y = null;
+      applyPos();
+    }
+  });
   let pet = null;
   let assetsReady = false;
   let loadError = null;
@@ -597,9 +912,11 @@ function apply(ctx = {}) {
   let wanderTimer = null;
   const scheduleWander = () => {
     clearTimeout(wanderTimer);
+    if (!wanderEnabled) return;
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
     const wait = WANDER_MIN_WAIT + Math.random() * (WANDER_MAX_WAIT - WANDER_MIN_WAIT);
     wanderTimer = setTimeout(() => {
+      if (!wanderEnabled) return;
       if (dragging || transient !== null || look !== null) {
         scheduleWander();
         return;
@@ -614,7 +931,7 @@ function apply(ctx = {}) {
       wander = { dir, until: Date.now() + dur };
       const step = () => {
         if (wander === null) return;
-        if (Date.now() >= wander.until || dragging || look !== null) {
+        if (!wanderEnabled || Date.now() >= wander.until || dragging || look !== null) {
           wander = null;
           scheduleWander();
           return;
@@ -664,7 +981,7 @@ function apply(ctx = {}) {
       press.py = e.clientY;
       return;
     }
-    if (dragging || transient !== null) {
+    if (!lookEnabled || dragging || transient !== null) {
       look = null;
       return;
     }
@@ -691,8 +1008,7 @@ function apply(ctx = {}) {
     if (wasDrag) {
       dragging = false;
       hitarea.classList.remove("dragging");
-      STORE.set("dsh-manqu-pet:x", x);
-      STORE.set("dsh-manqu-pet:y", y);
+      writePosition(x, y);
       return;
     }
     readyUnread = false;
@@ -773,15 +1089,10 @@ function apply(ctx = {}) {
   });
   btnHide.addEventListener("click", () => {
     closeMenu();
-    host.setAttribute("data-hidden", "");
-    restore.style.display = "";
-    STORE.set("dsh-manqu-pet:hidden", true);
+    updatePrefs({ visible: false });
   });
   restore.addEventListener("click", () => {
-    host.removeAttribute("data-hidden");
-    applyPos();
-    restore.style.display = "none";
-    STORE.set("dsh-manqu-pet:hidden", false);
+    updatePrefs({ visible: true });
     transient = { id: "waving", at: Date.now(), held: false };
   });
   const onKeyDown = (e) => {
@@ -806,10 +1117,7 @@ function apply(ctx = {}) {
   hitarea.addEventListener("keydown", onKeyDown);
   document.documentElement.addEventListener("mouseleave", clearLook);
   window.addEventListener("blur", clearLook);
-  if (STORE.get("dsh-manqu-pet:hidden", false) === true) {
-    host.setAttribute("data-hidden", "");
-    restore.style.display = "";
-  }
+  if (!prefs.visible) applyVisibility(false);
   const onResize = () => {
     invalidateInsets();
     applyPos();
@@ -849,6 +1157,7 @@ function apply(ctx = {}) {
   requestAnimationFrame(tick);
   scheduleWander();
   return () => {
+    unsubscribePrefs();
     stopPolling();
     clearTimeout(wanderTimer);
     clearTimeout(wanderStepTimer);
@@ -867,7 +1176,6 @@ function apply(ctx = {}) {
     shellObserver?.disconnect();
   };
 }
-var name = "dsh-manqu-pet";
 		return module.exports;
 	}
 });

@@ -1,16 +1,18 @@
 {
   "name": "dsh-manqu-pet",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "DSH（Web GUI / 桌面端）桌面宠物：灰泽满的 CodexPet「满区 Manqu」原版移植（CodexPet v2 图集：待机眨眼/拖动蠕动/跟随视线，桌面端避开原生窗口按钮）",
+  "description": "DSH（Web GUI / 桌面端）桌面宠物：灰泽满的 CodexPet「满区 Manqu」原版移植（CodexPet v2 图集：待机眨眼/拖动蠕动/跟随视线，桌面端避开原生窗口按钮；设置面板里自带「满区 Manqu」分区）",
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
     "check:client": "node scripts/build-client.mjs --check",
     "test": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "main": "./.dsh-plugin/index.mjs",
   "exports": {

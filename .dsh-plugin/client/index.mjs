@@ -15,9 +15,27 @@ import { CELL_WIDTH, CELL_HEIGHT, COLUMNS, stateById, frameIndexesFor, durationF
 import { pickBaseState } from '../src/state.mjs'
 import { shellEnvFrom, shellInsets, clampPetX, clampPetPosition, PET_BOTTOM_GAP, overlayPlacement } from '../src/shell.mjs'
 import { STATE_PATH, ASSETS_PATH, EVENTS_PATH } from '../src/routes.mjs'
+import { readPrefs, readPosition, subscribePrefs, updatePrefs, writePosition } from './prefs.mjs'
+import { SECTION_ID, SECTION_LABEL, SECTION_ORDER, createSettingsSection } from './settings-section.mjs'
+
+// 宿主的 ModuleLoader 用 factory 参数注入 require；node:test 直接 import 这份源文件时没有它。
+// bundle 成 cjs 后这段 `require` 指的就是 factory 的形参，React 由宿主提供。
+const HOST_REQUIRE = typeof require === 'function' ? require : null
+let React = null
+try { React = HOST_REQUIRE === null ? null : HOST_REQUIRE('react') } catch { React = null }
+
+/**
+ * 测试专用 seam：浏览器里 React 由 ModuleLoader 的 require 提供，
+ * node:test 直接 import 源文件时没有 require，用它把假 React 塞进来。
+ */
+export function __setReactForTest(reactModule) { React = reactModule }
+
+/** 宿主按 name 认领插件，按 inject 注入 ctx.slots（设置页需要它）。 */
+export const name = 'dsh-manqu-pet'
+export const inject = ['slots']
 
 const ASSETS_URL = ASSETS_PATH
-const PET_HEIGHT = 150 // 显示高度 px（192×208 格按比例缩放）
+const CELL_ASPECT = CELL_WIDTH / CELL_HEIGHT
 const DPR = Math.min(window.devicePixelRatio || 1, 3) // 物理像素倍率（上限 3，防高 DPI 内存失控）
 const REDUCED_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 const LOOK_RADIUS = 520 // 视线跟随半径 px
@@ -99,6 +117,24 @@ export function apply(ctx = {}) {
     return () => {}
   }
 
+  const prefs = readPrefs()
+  // 设置页是首选出口；拿不到 React 或宿主没有 slots 时整个菜单不出现，
+  // 隐藏后改用右下角恢复按钮兜底（老宿主仍然可用）。
+  let settingsSection = false
+  if (React !== null && typeof ctx?.slots?.inject === 'function') {
+    try {
+      ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
+        id: SECTION_ID,
+        order: SECTION_ORDER,
+        label: () => SECTION_LABEL,
+      }, createSettingsSection(React)))
+      settingsSection = true
+    } catch (error) {
+      console.warn('[dsh-manqu-pet] 设置页注册失败，退回右下角恢复按钮：', error)
+    }
+  }
+
   const style = document.createElement('style')
   style.textContent = CSS
   document.head.appendChild(style)
@@ -107,7 +143,13 @@ export function apply(ctx = {}) {
   host.setAttribute('data-dsh-manqu-pet', '')
   host.setAttribute('role', 'group')
   host.setAttribute('aria-label', '满区 Manqu 桌面宠物')
-  host.style.cssText = `width: ${PET_HEIGHT * (CELL_WIDTH / CELL_HEIGHT)}px; height: ${PET_HEIGHT}px;`
+  // 尺寸是偏好：设置页改一次，宠物当场缩放（画布按 192×208 逻辑坐标绘制，靠 CSS 铺满）。
+  const applySize = (size) => {
+    // 不取整：192×208 的宽高比不是整数，取整会让坐标钳制与记忆位置差出半个像素。
+    host.style.width = `${size * CELL_ASPECT}px`
+    host.style.height = `${size}px`
+  }
+  applySize(prefs.size)
   document.body.appendChild(host)
 
   const canvas = document.createElement('canvas')
@@ -170,8 +212,9 @@ export function apply(ctx = {}) {
     }
     return cachedInsets
   }
-  let x = STORE.get('dsh-manqu-pet:x', 24)
-  let y = STORE.get('dsh-manqu-pet:y', null) // null = 贴底
+  const saved = readPosition()
+  let x = saved.x
+  let y = saved.y // null = 贴底
   const updatePlacement = () => {
     const height = host.offsetHeight
     const top = y === null ? vh() - PET_BOTTOM_GAP - height : y
@@ -204,6 +247,29 @@ export function apply(ctx = {}) {
     updatePlacement()
   }
   applyPos()
+
+  // ---- 偏好订阅：设置页与右键菜单写的是同一个 store，宠物只在这里接收 ----
+  let wanderEnabled = prefs.wander
+  let lookEnabled = prefs.look
+  const applyVisibility = (visible) => {
+    host.toggleAttribute('data-hidden', !visible)
+    if (visible) {
+      restore.style.display = 'none'
+      applyPos() // 隐藏期间的窗口变化在恢复时补一次钳制
+      return
+    }
+    // 设置页能把它叫回来时就不摆角标按钮了；没有设置页的老宿主仍然需要这个出口。
+    restore.style.display = settingsSection ? 'none' : ''
+  }
+  const unsubscribePrefs = subscribePrefs(({ prefs: next, resetPosition: didReset }) => {
+    applySize(next.size)
+    applyVisibility(next.visible)
+    wanderEnabled = next.wander
+    lookEnabled = next.look
+    if (!next.wander) { wander = null; clearTimeout(wanderStepTimer) }
+    if (!next.look) look = null
+    if (didReset === true) { x = 24; y = null; applyPos() }
+  })
 
   // ---- 资产加载与帧分析 ----
   let pet = null // { rows, cols, populatedByRow, image }
@@ -422,9 +488,11 @@ export function apply(ctx = {}) {
   let wanderTimer = null
   const scheduleWander = () => {
     clearTimeout(wanderTimer)
+    if (!wanderEnabled) return
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     const wait = WANDER_MIN_WAIT + Math.random() * (WANDER_MAX_WAIT - WANDER_MIN_WAIT)
     wanderTimer = setTimeout(() => {
+      if (!wanderEnabled) return
       if (dragging || transient !== null || look !== null) { scheduleWander(); return }
       const base = pickBaseState(baseMood(), Date.now())
       if (base !== 'idle' || y !== null) { scheduleWander(); return }
@@ -433,7 +501,7 @@ export function apply(ctx = {}) {
       wander = { dir, until: Date.now() + dur }
       const step = () => {
         if (wander === null) return
-        if (Date.now() >= wander.until || dragging || look !== null) { wander = null; scheduleWander(); return }
+        if (!wanderEnabled || Date.now() >= wander.until || dragging || look !== null) { wander = null; scheduleWander(); return }
         const delta = dir * WANDER_SPEED * 0.1
         x = clampPetX(x + delta, host.offsetWidth, vw())
         applyPos()
@@ -483,7 +551,7 @@ export function apply(ctx = {}) {
       return
     }
     // 视线跟随（非拖拽时）
-    if (dragging || transient !== null) { look = null; return }
+    if (!lookEnabled || dragging || transient !== null) { look = null; return }
     const rect = host.getBoundingClientRect()
     const cx = rect.left + rect.width / 2
     const cy = rect.top + rect.height / 2
@@ -507,8 +575,7 @@ export function apply(ctx = {}) {
     if (wasDrag) {
       dragging = false
       hitarea.classList.remove('dragging')
-      STORE.set('dsh-manqu-pet:x', x)
-      STORE.set('dsh-manqu-pet:y', y)
+      writePosition(x, y)
       return
     }
     // 单击已读：非拖拽的按下-抬起视为查看过当前活动（Ready→review 沉降）
@@ -577,15 +644,11 @@ export function apply(ctx = {}) {
   btnJump.addEventListener('click', () => { closeMenu(); transient = { id: 'jumping', at: Date.now(), held: false }; bubble('耶！') })
   btnHide.addEventListener('click', () => {
     closeMenu()
-    host.setAttribute('data-hidden', '')
-    restore.style.display = ''
-    STORE.set('dsh-manqu-pet:hidden', true)
+    // 隐藏走偏好 store：设置页的「显示满区」开关会同步显示为关，恢复也从那里开。
+    updatePrefs({ visible: false })
   })
   restore.addEventListener('click', () => {
-    host.removeAttribute('data-hidden')
-    applyPos() // 隐藏期间的窗口变化在恢复时补一次钳制
-    restore.style.display = 'none'
-    STORE.set('dsh-manqu-pet:hidden', false)
+    updatePrefs({ visible: true })
     transient = { id: 'waving', at: Date.now(), held: false }
   })
   const onKeyDown = (e) => {
@@ -613,10 +676,8 @@ export function apply(ctx = {}) {
   window.addEventListener('blur', clearLook)
 
   // ---- 初始化 ----
-  if (STORE.get('dsh-manqu-pet:hidden', false) === true) {
-    host.setAttribute('data-hidden', '')
-    restore.style.display = ''
-  }
+  // 上次退出时是隐藏态：直接用同一个收口恢复，避免「标记已写、按钮没摆」的半截状态。
+  if (!prefs.visible) applyVisibility(false)
   // 窗口尺寸变化（桌面端可自由缩放/最大化）：重钳 x 与 y，并避开壳层安全区。
   const onResize = () => { invalidateInsets(); applyPos() }
   window.addEventListener('resize', onResize)
@@ -658,6 +719,7 @@ export function apply(ctx = {}) {
   scheduleWander()
 
   return () => {
+    unsubscribePrefs()
     stopPolling()
     clearTimeout(wanderTimer)
     clearTimeout(wanderStepTimer)
@@ -676,6 +738,3 @@ export function apply(ctx = {}) {
     shellObserver?.disconnect()
   }
 }
-
-// 标准 bundle client 形态：exports { name, apply }。
-export const name = 'dsh-manqu-pet'
