@@ -203,3 +203,30 @@ test('隐藏时窗口缩放不改记住的坐标，恢复时重新钳制', async
   const top = Number.parseFloat(host.style.top)
   assert.ok(top <= 500 - 150 - PET_GAP && top >= WINDOWS_TITLEBAR_HEIGHT + PET_GAP, `恢复后应重新钳制进可视区，实际 ${top}`)
 })
+
+// 回归守卫：恢复按钮挂在 body 上（host 隐藏时是 display:none，按钮不能塞进 host），
+// 所以它的定位样式只能由自身锚点提供。若写成 `[data-dsh-manqu-pet] .pet-restore` 这类
+// 后代选择器，规则永远不命中 —— 真实 Chrome 算出来是 position:static / right:auto /
+// z-index:auto，按钮跑到文档顶部被根容器盖住，用户就找不到它。
+test('隐藏后的恢复按钮：定位样式直挂按钮自身，不依赖 host 后代作用域', async (t) => {
+  const { dom, dispose } = await boot({ width: 1280, height: 800, storage: { 'dsh-manqu-pet:hidden': 'true' } })
+  t.after(() => { dispose(); dom.uninstall() })
+
+  const restore = dom.element('.pet-restore')
+  assert.ok(restore !== null, '隐藏态应挂出恢复按钮')
+  assert.equal(restore.parentNode, dom.document.body, '恢复按钮是 body 直接子元素，不在 host 内')
+  assert.equal(
+    restore.hasAttribute('data-dsh-manqu-pet-restore'),
+    true,
+    '恢复按钮要有自己的样式锚点，否则后代选择器永远不命中',
+  )
+
+  // 剥离注释后再断言：注释里为了解释这个坑，本身会提到旧选择器。
+  const css = dom.document.head.querySelector('style').textContent.replace(/\/\*[\s\S]*?\*\//g, '')
+  const rule = css.match(/\[data-dsh-manqu-pet-restore\][^{]*\{([^}]*)\}/)
+  assert.ok(rule !== null, 'CSS 里应有 [data-dsh-manqu-pet-restore] 规则')
+  assert.match(rule[1], /position:\s*fixed/, '恢复按钮必须 fixed 定位')
+  assert.match(rule[1], /right:\s*20px/, '恢复按钮贴右边')
+  assert.match(rule[1], /bottom:\s*20px/, '恢复按钮贴底边')
+  assert.equal(/\[data-dsh-manqu-pet\]\s+\.pet-restore/.test(css), false, '不能再用 host 后代作用域选择器')
+})
